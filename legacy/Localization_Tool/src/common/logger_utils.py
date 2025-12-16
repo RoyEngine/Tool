@@ -64,14 +64,19 @@ class LogFormatter(logging.Formatter):
     """增强型日志格式化器"""
     def __init__(self, fmt=None, datefmt=None, style='%', validate=True):
         if fmt is None:
-            fmt = '%(asctime)s - %(name)s - %(levelname)s - [%(error_code)s] - %(filename)s:%(lineno)d - %(message)s'
+            # 添加阶段标记，使日志更具结构性
+            fmt = '%(asctime)s - %(name)s - %(levelname)s - [%(error_code)s] - [%(stage)s] - %(filename)s:%(lineno)d - %(message)s'
         super().__init__(fmt, datefmt, style, validate)
         self.default_error_code = "N/A"
+        self.default_stage = "GENERAL"
 
     def format(self, record):
         # 添加默认错误码
         if not hasattr(record, 'error_code'):
             record.error_code = self.default_error_code
+        # 添加默认阶段
+        if not hasattr(record, 'stage'):
+            record.stage = self.default_stage
         return super().format(record)
 
 
@@ -144,16 +149,21 @@ def setup_logger(name: str, log_dir: str = None, level: int = logging.INFO) -> l
     logger.setLevel(level)
     logger.propagate = False
     
-    # 创建日志格式化器
-    formatter = LogFormatter()
+    # 创建文件输出格式（完整格式）
+    file_formatter = LogFormatter()
     
-    # 创建控制台处理器
+    # 创建控制台输出格式（简洁格式）
+    console_formatter = LogFormatter(
+        fmt='[%(levelname)s] [%(stage)s] %(message)s'
+    )
+    
+    # 创建控制台处理器，使用简洁格式
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
     
-    # 创建文件处理器
+    # 创建文件处理器，使用完整格式
     if config.use_timed_rotation:
         # 使用时间轮转
         file_handler = TimedRotatingFileHandler(
@@ -173,7 +183,7 @@ def setup_logger(name: str, log_dir: str = None, level: int = logging.INFO) -> l
         )
     
     file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     
     # 保存到日志管理器
@@ -421,10 +431,14 @@ def setup_global_logging():
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     
-    # 添加控制台处理器
+    # 添加控制台处理器，使用简洁格式
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(LogFormatter())
+    # 使用简洁的控制台格式
+    console_formatter = LogFormatter(
+        fmt='[%(levelname)s] [%(stage)s] %(message)s'
+    )
+    console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
     
     # 设置第三方库的日志级别

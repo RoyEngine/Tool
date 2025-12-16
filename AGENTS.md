@@ -1,127 +1,139 @@
 # AGENTS — Starsector Localization Tool (V0)
 
-This file defines the working contract for automated agents (e.g., Codex) and contributors.
-Follow it strictly.
+This file is the working contract for automated agents (Codex) and contributors.
+Follow it strictly. If requirements conflict, this file wins.
 
-## V0 Goal (Deliverable)
-Deliver a CLI closed loop for Java/Kotlin source localization:
+## 1) V0 Objective (CLI Closed Loop, Minimal but Real)
+Deliver a deterministic, auditable CLI closed loop for Java/Kotlin source localization:
 
-- Extract (MVP-Extract): parse `.java/.kt/.kts` under `src/` using Tree-sitter and generate/update rules (YAML/JSON).
-- Apply (MVP-Apply): apply translated rules to an English source tree and produce a translated output tree + report.
-- Extend (MVP-Extend-Learn): learn alignment from EN+ZH source trees to auto-fill translations and append new untranslated items.
+- Increment A — Extract (Minimal Usable)
+- Increment B — Apply (Minimal Usable)
+- Increment C — Extend (Learning Alignment, Minimal High-Confidence)
 
-Translation is manual. No machine translation in V0.
+Manual translation only in V0 (no machine translation).
 
-## Canonical Repo Layout (Scheme B)
+## 2) Canonical Repo Layout (Scheme B, MUST)
 - Tool code (canonical): `legacy/Localization_Tool/src`
 - Fixtures (do not move):
   - English: `legacy/Localization_File/source/English/<ModFolder>/src`
   - Chinese: `legacy/Localization_File/source/Chinese/<ModFolder>/src`
-- Baseline extracted mappings (keep for regression):
-  - `legacy/Localization_File/output/Extract_English/**/English_mappings.yaml|json`
-  - `legacy/Localization_File/output/Extract_Chinese/**/Chinese_mappings.yaml|json`
+- Output (generated):
+  - Extract: `legacy/Localization_File/output/Extract_English/**` and `Extract_Chinese/**`
+  - Apply:   `legacy/Localization_File/output/Apply_*/**` (should be gitignored)
+  - Extend:  `legacy/Localization_File/output/Extend_*/**` (should be gitignored)
 
-## Non-goals (V0)
-- Do NOT implement jar decompile/unpack in the Extract/Apply/Extend main loop.
-- Do NOT translate `data/localization` CSV/JSON.
-- Do NOT perform global search/replace by raw text.
+Note:
+- `<ModFolder>` is the mod root folder (it may include `mod_info.json`, `README.md`, etc.), and MUST contain `src/`.
 
-## V0 Delivery Increments (MUST follow)
-### Increment 1 — MVP-Extract
-Inputs:
-- `--lang English|Chinese`
-- `--source-root legacy/Localization_File/source/<Lang>`
-Behavior:
-- Enumerate `<ModFolder>` sorted.
-- For each `<ModFolder>/src`, enumerate files sorted by relative path.
-- Extract string literals/templates with Tree-sitter.
-Outputs:
-- `legacy/Localization_File/output/Extract_<Lang>/<ModFolder>.../<Lang>_mappings.yaml|json`
-- Optional per-mod extract report.
+## 3) V0 Non-Goals (MUST NOT)
+- Do NOT implement jar decompile/unpack inside Extract main flow.
+- Do NOT translate `data/localization` CSV/JSON in V0.
+- Do NOT perform global search/replace by raw text only.
+- Do NOT “auto-fix” syntax by guessing (must skip + report).
 
-Definition of Done:
-- Deterministic output ordering.
-- Kotlin placeholders extracted into `placeholders`.
+Jar-related utilities may exist, but must be isolated behind a separate command or utility module,
+and not imported by Extract core pipeline.
 
-### Increment 2 — MVP-Apply
-Inputs:
-- `--src legacy/Localization_File/source/English/<ModFolder>`
-- `--rules <PATH_TO_YAML>`
-- `--out <OUT_DIR>`
-Behavior:
-- Replace per-file in reverse order of location (descending start_byte).
-- Validate placeholder consistency; mismatch => skip + report.
-Outputs:
-- `<out>/src/...` translated tree
-- `<out>/report.json`
-
-Definition of Done:
-- Some `status=translated` items are applied safely.
-- Report includes skip/fail reasons.
-
-### Increment 3 — MVP-Extend-Learn
-Inputs:
-- `--en-src .../English/<ModFolder>/src`
-- `--zh-src .../Chinese/<ModFolder>/src`
-- optional `--base-rules <English_mappings.yaml>`
-Behavior:
-- Pair files by relative path.
-- Align strings by stable structure first (same file + same index order).
-- Fallback to context-based heuristic only when needed; uncertain => mark `fuzzy/stale`.
-Outputs:
-- Updated rules file (either overwrite or write to output/Extend_Learn/).
-
-Definition of Done:
-- Existing translations inherited/auto-filled where confidently aligned.
-- New strings appended as `untranslated`.
-
-## Rules File Compatibility (MUST)
+## 4) Rules YAML Compatibility (MUST)
 Rules YAML must remain backward compatible with the current schema:
-- Top-level: `version`, `created_at`, `mappings: []`
-- Each mapping keeps at least:
-  - `id`, `original`, `translated`, `context`, `status`, `placeholders`
-You MAY add new fields (e.g., `rel_path`, `start_byte`, `end_byte`, `loc`, `key`)
-but MUST NOT rename/remove existing ones.
 
-## Determinism Requirements
-- Mod folder enumeration must be sorted (by folder name).
-- File enumeration inside `src/` must be sorted (by relative path).
-- Apply replacements must be done per-file in reverse order of location (descending start_byte).
+Top-level:
+- `version`
+- `created_at`
+- `mappings: []`
 
-## Kotlin Safety Requirements
-- Kotlin strings with interpolation (`$var` or `${expr}`) are high risk.
-- Extract MUST collect placeholders into `placeholders`.
-- Apply MUST validate placeholders consistency before replacement:
-  - If mismatch, skip replacement and record reason `placeholder_mismatch`.
+Each mapping MUST keep at least:
+- `id`
+- `original`
+- `translated`
+- `context`
+- `status`
+- `placeholders`
 
-## Target CLI (V0 interface)
-Run from repo root:
+You MAY add fields such as:
+- `rel_path`, `loc`, `key`, `node_type`, `lang`, `hash`, etc.
+But MUST NOT rename/remove existing ones.
 
-### Extract (recursively for all mods under a language root)
+### Status Values (V0)
+Use a small stable set:
+- `untranslated`  (default)
+- `translated`    (human-confirmed)
+- `skipped`       (explicitly ignore)
+- `fuzzy`         (auto-filled suggestion; NOT confirmed)
+- `placeholder_mismatch`
+- `locate_failed`
+
+## 5) Determinism Requirements (MUST)
+- Mod folder enumeration MUST be sorted by folder name.
+- File enumeration inside `src/` MUST be sorted by relative path.
+- Apply replacements MUST be done per-file in reverse order of byte ranges (descending start_byte)
+  to avoid offset shifts.
+
+## 6) Kotlin Placeholder Safety (MUST)
+Kotlin interpolation is high risk:
+- `$var`
+- `${expr}`
+- raw strings `""" ... """` may also include interpolation
+
+Extract MUST capture placeholders into `placeholders`.
+Apply MUST validate placeholder consistency:
+- If mismatch: skip replacement and record `placeholder_mismatch` in report.
+
+## 7) CLI Interface (V0)
+Run from repo root.
+
+### 7.1 Extract (all mods under a language root)
 - `python legacy/Localization_Tool/src/main.py extract --lang English --source-root legacy/Localization_File/source/English --out-root legacy/Localization_File/output`
 - `python legacy/Localization_Tool/src/main.py extract --lang Chinese --source-root legacy/Localization_File/source/Chinese --out-root legacy/Localization_File/output`
 
-### Apply (one mod at a time)
-- `python legacy/Localization_Tool/src/main.py apply --src legacy/Localization_File/source/English/<ModFolder> --rules <PATH_TO_YAML> --out legacy/Localization_File/output/Apply_En2Zh/<ModFolder>`
+Optional:
+- `--mod "<ModFolderName>"` to run one mod only.
+- `--rules-out "<path>"` to force a stable output path for CI.
 
-### Extend (learn alignment from EN+ZH)
-- `python legacy/Localization_Tool/src/main.py extend --en-src legacy/Localization_File/source/English/<ModFolder>/src --zh-src legacy/Localization_File/source/Chinese/<ModFolder>/src --base-rules <PATH_TO_EN_RULES> --out <OUT_DIR>`
+### 7.2 Apply (one mod at a time)
+- `python legacy/Localization_Tool/src/main.py apply --src legacy/Localization_File/source/English/<ModFolder> --rules <PATH_TO_YAML> --out <OUT_DIR>`
 
-## Reporting (MUST)
-Apply must produce a machine-readable report (JSON preferred) including:
+### 7.3 Extend (learning alignment, minimal high confidence)
+Goal: auto-fill English rules using existing Chinese source/rules when alignment is high confidence.
+- `python legacy/Localization_Tool/src/main.py extend --en-src legacy/Localization_File/source/English/<ModFolder> --zh-src legacy/Localization_File/source/Chinese/<ModFolder> --en-rules <EN_YAML> --zh-rules <ZH_YAML> --out <OUT_EN_YAML>`
+
+Extend MUST NOT overwrite human-confirmed translations unless `--force` is explicitly provided.
+
+## 8) Reporting (MUST)
+Apply and Extend MUST produce a machine-readable report (`report.json`) including:
 - total mappings processed
-- replaced count
+- replaced/filled count
 - skipped count (by reason)
-- failures (by reason, including file + mapping id)
+- failures (by reason) including file + mapping id/key
 
 At minimum include reasons:
 - `placeholder_mismatch`
 - `locate_failed`
 - `status_not_translated` (or equivalent)
+- `parse_failed`
 
-## Definition of Done (V0)
-- Extract produces mapping files for each `<ModFolder>` under English/Chinese roots.
-- After manually editing some `translated` + setting `status=translated`,
-  Apply generates an output tree with valid string literal syntax.
-- Extend can auto-fill confident translations from EN+ZH and append new untranslated items.
-- Reports allow tracing any skipped/failed item.
+## 9) Minimal Delivery Increments (MUST, in this order)
+
+### Increment A — Extract Minimal Usable (DoD)
+- Can parse `.java/.kt/.kts` under `src/` using Tree-sitter.
+- Produces one rules YAML per `<ModFolder>` per language.
+- If rules already exist, merges deterministically:
+  - Preserve existing `translated/status` for existing ids/keys.
+  - Add new entries as `untranslated`.
+  - Optionally mark removed entries as `stale` (do not delete silently).
+
+### Increment B — Apply Minimal Usable (DoD)
+- Reads an English `<ModFolder>/src`.
+- Applies only mappings with `status=translated`.
+- Performs safe replacements (reverse order per file).
+- Outputs translated tree + `report.json`.
+
+### Increment C — Extend Learning Alignment (DoD)
+- High-confidence alignment only (exact match by stable key; no aggressive fuzzy in V0).
+- Writes a new English rules YAML where auto-filled entries are `status=fuzzy` by default.
+- Produces `report.json` explaining what was matched and what was not.
+
+## 10) Notes for Codex Cloud
+- Prefer small PRs aligned with the three increments.
+- Each PR must include a short test plan section in the PR description.
+- Do not refactor unrelated modules while closing V0 loop.

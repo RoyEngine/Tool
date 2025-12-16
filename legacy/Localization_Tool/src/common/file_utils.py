@@ -12,12 +12,15 @@ import json
 import re
 import time
 import gc
+import platform
+import subprocess
 from pathlib import Path
+from typing import List, Dict, Any, Optional, Set
 
 # 常量定义
 BASE_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LANGUAGE_FOLDERS = ["Chinese", "English", "Chinese(New)", "English(New)"]
-MAIN_DIRECTORIES = ["File", "File_backup"]
+LANGUAGE_FOLDERS = ["Chinese", "English"]
+MAIN_DIRECTORIES = ["source", "source_backup"]
 
 # 定义支持的本地化模式
 LOCALIZATION_MODES = ["extend", "translate"]
@@ -80,8 +83,8 @@ def rename_mod_folders(file_path: str) -> bool:
             return False
         
         # 收集当前目录下的mod_info信息，按mod_id分组
-        mod_info_dict = {}
-        folders_info = []
+        mod_info_dict: Dict[str, List[Dict[str, Any]]] = {}
+        folders_info: List[Dict[str, Any]] = []
         
         # 直接处理当前目录下的mod文件夹
         items = os.listdir(file_path)
@@ -132,17 +135,25 @@ def rename_mod_folders(file_path: str) -> bool:
             return True
         
         # 定义获取新文件夹名称的辅助函数
-        def get_new_folder_name(folder_info, mod_info_dict):
+        def get_new_folder_name(folder_info: Dict[str, Any], mod_info_dict: Dict[str, List[Dict[str, Any]]]) -> str:
             """根据文件夹信息获取新的文件夹名称"""
+            mod_info = folder_info["mod_info"]
             mod_id = folder_info["mod_id"]
             
-            # 优先使用mod_id，确保命名一致性
-            if mod_id:
+            # 使用name + 空格 + version格式构建新的文件夹名称
+            if mod_info.get("name") and mod_info.get("version"):
+                new_folder_name = f"{mod_info['name']} {mod_info['version']}"
+            elif mod_info.get("name"):
+                new_folder_name = mod_info["name"]
+            elif mod_info.get("version"):
+                new_folder_name = f"{mod_id if mod_id else folder_info['folder_name']} {mod_info['version']}"
+            else:
+                # 回退到使用mod_id格式
                 new_folder_name = mod_id.lower().replace(" ", "_").replace("-", "_")
             return new_folder_name
         
         # 定义重命名单个文件夹的辅助函数
-        def rename_single_folder(folder_path, old_name, new_name):
+        def rename_single_folder(folder_path: str, old_name: str, new_name: str) -> bool:
             """重命名单个文件夹，实现重试机制"""
             new_folder_path = os.path.join(os.path.dirname(folder_path), new_name)
             
@@ -252,14 +263,13 @@ def extract_pure_mod_name(folder_name: str) -> str:
     Returns:
         str: 纯净的模组名称
     """
-    import re
     # 匹配更复杂的版本号格式，包括：
     # - 简单版本号：1.0, 1.2.3
     # - 带字母的版本号：1.0a, 2.0.0b
     # - 带预发布标签的版本号：1.0.0-alpha, 2.0.0-beta.1
     # - 带构建元数据的版本号：1.0.0+build.1
     # 注意：只匹配至少包含一个点号的版本号，避免匹配文件名末尾的单个数字
-    version_pattern = r"\s+([0-9]+\.[0-9]+(?:\.[0-9]+)*[a-zA-Z]*(-[0-9A-Za-z.]+)?(\+[0-9A-Za-z.]+)?)\s*$"
+    version_pattern = r"\s+([0-9]+\.[0-9]+(?:\.[0-9]+)*[a-zA-Z]*(?:-[0-9A-Za-z.]+)*(?:\+[0-9A-Za-z.]+)*)\s*$"
     pure_name = folder_name
     
     match = re.search(version_pattern, folder_name)
@@ -270,7 +280,7 @@ def extract_pure_mod_name(folder_name: str) -> str:
     return pure_name
 
 
-def find_folder_by_mod_id(directory: str, mod_id: str, language: str = None) -> dict:
+def find_folder_by_mod_id(directory: str, mod_id: str, language: Optional[str] = None) -> Dict[str, Any]:
     """
     根据 mod_id 查找对应的文件夹信息
     
@@ -287,10 +297,10 @@ def find_folder_by_mod_id(directory: str, mod_id: str, language: str = None) -> 
     print(f"[INFO] 语言过滤: {language if language else '所有语言'}")
     
     # 存储匹配的文件夹信息
-    matching_folders = []
+    matching_folders: List[Dict[str, Any]] = []
     
     # 递归搜索函数
-    def search_folder(current_dir):
+    def search_folder(current_dir: str) -> None:
         """递归搜索当前目录下的所有文件夹"""
         try:
             items = os.listdir(current_dir)
@@ -303,7 +313,7 @@ def find_folder_by_mod_id(directory: str, mod_id: str, language: str = None) -> 
             if os.path.isdir(item_path):
                 # 获取当前目录的语言类型
                 current_dir_name = os.path.basename(current_dir)
-                folder_language = None
+                folder_language: Optional[str] = None
                 
                 # 检查当前目录是否为语言文件夹
                 if current_dir_name in LANGUAGE_FOLDERS:
@@ -348,7 +358,7 @@ def find_folder_by_mod_id(directory: str, mod_id: str, language: str = None) -> 
     return {}
 
 
-def collect_mods(directory: str) -> dict:
+def collect_mods(directory: str) -> Dict[str, List[Dict[str, Any]]]:
     """
     递归收集目录下所有mod文件夹的mod_id映射
     
@@ -360,10 +370,10 @@ def collect_mods(directory: str) -> dict:
     """
     print(f"\n===== 收集 {os.path.basename(directory)} 下的mod文件夹信息 =====")
     
-    mods = {}
+    mods: Dict[str, List[Dict[str, Any]]] = {}
     
     # 递归搜索函数
-    def search_folder(current_dir):
+    def search_folder(current_dir: str) -> None:
         """递归搜索当前目录下的所有mod文件夹"""
         try:
             items = os.listdir(current_dir)
@@ -384,7 +394,7 @@ def collect_mods(directory: str) -> dict:
                     mod_id = mod_info.get("id", "")
                     if mod_id:
                         # 获取文件夹语言
-                        folder_language = None
+                        folder_language: Optional[str] = None
                         parent_dir = os.path.basename(os.path.dirname(item_path))
                         for lang in LANGUAGE_FOLDERS:
                             if lang in parent_dir:
@@ -419,7 +429,7 @@ def collect_mods(directory: str) -> dict:
 # 保留原函数名作为别名，确保向后兼容
 _collect_mods = collect_mods
 
-def get_folder_by_mod_id(base_path: str, mod_id: str, language: str = None, mode: str = None) -> dict:
+def get_folder_by_mod_id(base_path: str, mod_id: str, language: Optional[str] = None, mode: Optional[str] = None) -> Dict[str, Any]:
     """
     根据 mod_id 获取对应的文件夹信息
     
@@ -469,7 +479,7 @@ def restore_backup(backup_path: str, target_path: str) -> bool:
         
         # 1. 检查target_path是否存在
         if not os.path.exists(target_path):
-            os.makedirs(target_path)
+            os.makedirs(target_path, exist_ok=True)
         
         # 2. 递归收集目标路径下所有mod文件夹的mod_id映射
         target_mods = collect_mods(target_path)
@@ -488,7 +498,7 @@ def restore_backup(backup_path: str, target_path: str) -> bool:
                 # 匹配目标文件夹和备份文件夹
                 for target_mod in target_mod_list:
                     # 查找相同语言的备份文件夹
-                    matching_backup_mod = None
+                    matching_backup_mod: Optional[Dict[str, Any]] = None
                     for backup_mod in backup_mod_list:
                         if target_mod["language"] == backup_mod["language"]:
                             matching_backup_mod = backup_mod
@@ -551,7 +561,7 @@ def cleanup_nested_src_directories(source_path: str) -> bool:
         has_cleaned = False
         
         # 存储需要处理的嵌套src目录路径
-        nested_src_paths = []
+        nested_src_paths: List[str] = []
         
         # 第一遍：收集所有嵌套的src目录
         # 例如：Chinese/src/ModName/src 或 English/src/ModName/src
@@ -715,7 +725,7 @@ def fix_source_directory(source_path: str, backup_path: str) -> bool:
         return False
 
 
-def compare_source_with_backup(source_path: str, backup_path: str) -> dict:
+def compare_source_with_backup(source_path: str, backup_path: str) -> Dict[str, List[str]]:
     """
     比较source和source_backup目录，检测是否存在差异
 
@@ -728,7 +738,7 @@ def compare_source_with_backup(source_path: str, backup_path: str) -> dict:
     """
     print("\n===== 比较source与backup目录 =====")
     
-    differences = {
+    differences: Dict[str, List[str]] = {
         "missing_dirs": [],
         "extra_dirs": [],
         "missing_files": [],
@@ -747,8 +757,8 @@ def compare_source_with_backup(source_path: str, backup_path: str) -> dict:
             return differences
         
         # 创建一个集合来存储所有备份文件路径
-        backup_files = set()
-        backup_dirs = set()
+        backup_files: Set[str] = set()
+        backup_dirs: Set[str] = set()
         
         # 遍历备份目录，收集所有文件和目录路径
         for root, dirs, files in os.walk(backup_path):
@@ -762,8 +772,8 @@ def compare_source_with_backup(source_path: str, backup_path: str) -> dict:
                 backup_files.add(file_path)
         
         # 创建一个集合来存储所有源文件路径
-        source_files = set()
-        source_dirs = set()
+        source_files: Set[str] = set()
+        source_dirs: Set[str] = set()
         
         # 遍历源目录，收集所有文件和目录路径
         for root, dirs, files in os.walk(source_path):
@@ -886,8 +896,8 @@ def move_to_complete(source_path: str, complete_path: str, language: str, timest
         # 构建源文件夹名称，包含时间戳
         source_folder_name = f"{timestamp}_{os.path.basename(source_path)}"
 
-        # 移动文件夹
-        shutil.move(source_path, os.path.join(target_path, source_folder_name))
+        # 复制文件夹而非移动，保持原始位置不变
+        shutil.copytree(source_path, os.path.join(target_path, source_folder_name), dirs_exist_ok=True)
         return True
     except Exception as e:
         print(f"[ERROR] 移动到Complete目录失败: {e}")
@@ -940,6 +950,136 @@ def safe_move_file(src: str, dst: str) -> bool:
         return False
 
 
+def safe_delete_file(file_path: str) -> bool:
+    """
+    安全删除文件
+
+    Args:
+        file_path: 要删除的文件路径
+
+    Returns:
+        bool: 是否成功删除
+    """
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"[OK] 成功删除文件: {file_path}")
+            return True
+        return False
+    except Exception as e:
+        print(f"[ERROR] 删除文件失败: {file_path} - {e}")
+        return False
+
+
+def safe_delete_directory(directory: str) -> bool:
+    """
+    安全删除目录
+
+    Args:
+        directory: 要删除的目录路径
+
+    Returns:
+        bool: 是否成功删除
+    """
+    try:
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+            print(f"[OK] 成功删除目录: {directory}")
+            return True
+        return False
+    except Exception as e:
+        print(f"[ERROR] 删除目录失败: {directory} - {e}")
+        return False
+
+
+def batch_copy_files(file_list: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    批量复制文件
+
+    Args:
+        file_list: 包含源文件路径和目标文件路径的字典列表，格式：[{"src": "源路径", "dst": "目标路径"}]
+
+    Returns:
+        dict: 包含成功数、失败数和失败原因的字典
+    """
+    success_count = 0
+    fail_count = 0
+    fail_reasons = []
+
+    for file_info in file_list:
+        src = file_info["src"]
+        dst = file_info["dst"]
+        if safe_copy_file(src, dst):
+            success_count += 1
+        else:
+            fail_count += 1
+            fail_reasons.append(f"复制失败: {src} -> {dst}")
+
+    return {
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "fail_reasons": fail_reasons
+    }
+
+
+def batch_move_files(file_list: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    批量移动文件
+
+    Args:
+        file_list: 包含源文件路径和目标文件路径的字典列表，格式：[{"src": "源路径", "dst": "目标路径"}]
+
+    Returns:
+        dict: 包含成功数、失败数和失败原因的字典
+    """
+    success_count = 0
+    fail_count = 0
+    fail_reasons = []
+
+    for file_info in file_list:
+        src = file_info["src"]
+        dst = file_info["dst"]
+        if safe_move_file(src, dst):
+            success_count += 1
+        else:
+            fail_count += 1
+            fail_reasons.append(f"移动失败: {src} -> {dst}")
+
+    return {
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "fail_reasons": fail_reasons
+    }
+
+
+def batch_delete_files(file_list: List[str]) -> Dict[str, Any]:
+    """
+    批量删除文件
+
+    Args:
+        file_list: 要删除的文件路径列表
+
+    Returns:
+        dict: 包含成功数、失败数和失败原因的字典
+    """
+    success_count = 0
+    fail_count = 0
+    fail_reasons = []
+
+    for file_path in file_list:
+        if safe_delete_file(file_path):
+            success_count += 1
+        else:
+            fail_count += 1
+            fail_reasons.append(f"删除失败: {file_path}")
+
+    return {
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "fail_reasons": fail_reasons
+    }
+
+
 def open_directory(directory: str) -> bool:
     """
     打开指定的目录
@@ -951,9 +1091,6 @@ def open_directory(directory: str) -> bool:
         bool: 是否成功打开
     """
     try:
-        import platform
-        import subprocess
-
         # 根据操作系统选择打开方式
         if platform.system() == 'Windows':
             # 在Windows上使用start命令打开目录
@@ -1006,7 +1143,6 @@ def contains_chinese_in_file(file_path: str) -> bool:
                 return True
             
             # 如果没有实际中文字符，检查是否包含Unicode转义序列
-            import re
             if re.search(r'\\u[0-9a-fA-F]{4}', content):
                 # 使用latin-1编码重新读取文件，避免自动转换Unicode转义序列
                 with open(file_path, 'r', encoding='latin-1') as f:
@@ -1030,7 +1166,6 @@ def contains_chinese_in_file(file_path: str) -> bool:
                 content = f.read()
             
             # 转换Unicode转义序列为实际字符
-            import re
             def replace_unicode_escape(match):
                 """替换单个Unicode转义序列"""
                 try:
@@ -1069,7 +1204,7 @@ def contains_chinese_in_src(src_path: str) -> bool:
         return False
 
 
-def find_src_folders(directory: str) -> list:
+def find_src_folders(directory: str) -> List[str]:
     """
     查找目录下所有的src文件夹(包括目录本身如果它就是src的话)
 
@@ -1079,7 +1214,7 @@ def find_src_folders(directory: str) -> list:
     Returns:
         list: src文件夹路径列表
     """
-    src_folders = []
+    src_folders: List[str] = []
     try:
         # 检查目录本身是否就是src目录
         if os.path.basename(directory) == 'src':
@@ -1094,7 +1229,7 @@ def find_src_folders(directory: str) -> list:
     return src_folders
 
 
-def identify_directory_structure(base_path: str) -> dict:
+def identify_directory_structure(base_path: str) -> Dict[str, List[str]]:
     """
     统一识别目录结构，确保所有模式使用相同的目录识别逻辑
 
@@ -1104,7 +1239,7 @@ def identify_directory_structure(base_path: str) -> dict:
     Returns:
         dict: 包含识别结果的字典
     """
-    result = {
+    result: Dict[str, List[str]] = {
         "mod_folders": [],
         "src_folders": [],
         "jar_folders": [],
@@ -1191,7 +1326,7 @@ def get_mapping_source(chinese_mod_path: str) -> str:
         chinese_jar_path = os.path.join(chinese_mod_path, "jar")
 
         # 确定使用哪个文件夹进行映射
-        mapping_source = None
+        mapping_source: Optional[str] = None
 
         # 检查src文件夹是否存在且包含中文
         if os.path.exists(chinese_src_path) and os.path.isdir(chinese_src_path):
@@ -1208,13 +1343,13 @@ def get_mapping_source(chinese_mod_path: str) -> str:
         if not mapping_source:
             print(f"[WARN]  {os.path.basename(chinese_mod_path)} 文件夹下未找到可用的src或jar文件夹")
 
-        return mapping_source
+        return mapping_source if mapping_source else ""
     except Exception as e:
         print(f"[WARN]  确定映射源失败: {chinese_mod_path} - {e}")
         return ""
 
 
-def read_mod_info(mod_path: str) -> dict:
+def read_mod_info(mod_path: str) -> Dict[str, Any]:
     """
     读取mod_info.json文件，返回解析后的字典
 
@@ -1232,7 +1367,7 @@ def read_mod_info(mod_path: str) -> dict:
             return {}
 
         # 定义可能的mod_info.json路径
-        possible_paths = [
+        possible_paths: List[str] = [
             os.path.join(mod_path, "mod_info.json"),  # 根目录
         ]
 
@@ -1243,7 +1378,7 @@ def read_mod_info(mod_path: str) -> dict:
                 possible_paths.append(os.path.join(item_path, "mod_info.json"))
 
         # 查找并读取mod_info.json
-        mod_info_path = None
+        mod_info_path: Optional[str] = None
         for path in possible_paths:
             if os.path.exists(path) and os.path.isfile(path):
                 mod_info_path = path
@@ -1254,25 +1389,78 @@ def read_mod_info(mod_path: str) -> dict:
 
         # 读取并解析mod_info.json
         with open(mod_info_path, "r", encoding="utf-8") as f:
-            # 读取文件内容并移除注释
-            content = ''
-            for line in f:
-                # 移除行内注释
-                line = line.split('#')[0].strip()
-                if line:
-                    content += line + ' '
-            
-            # 修复JSON语法错误：移除尾随逗号
-            content = re.sub(r',\s*\]', r']', content)
-            content = re.sub(r',\s*\}', r'}', content)
-            content = re.sub(r',\s*\},', r'},', content)
-            
-            mod_info = json.loads(content)
+            content = f.read()
+        
+        # 移除JSON注释
+        import re
+        # 移除单行注释 // ...
+        content = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
+        # 移除#开头或行尾的注释
+        content = re.sub(r'#.*$', '', content, flags=re.MULTILINE)
+        # 移除多行注释 /* ... */
+        content = re.sub(r'/\*[\s\S]*?\*/', '', content)
+        # 将制表符替换为空格
+        content = content.replace('\t', '    ')
+        
+        # 修复JSON语法错误：移除尾随逗号
+        # 移除数组末尾的逗号
+        content = re.sub(r',\s*\]', r']', content)
+        # 移除对象末尾的逗号
+        content = re.sub(r',\s*\}', r'}', content)
+        # 移除对象属性后的逗号（如果后面跟着}或]）
+        content = re.sub(r',\s*(\}|\])', r'\1', content)
+        # 移除对象属性后的逗号（如果后面跟着换行和}或]）
+        content = re.sub(r',\s*\n\s*(\}|\])', r'\n\1', content)
+        
+        mod_info = json.loads(content)
 
         return mod_info
     except Exception as e:
         print(f"[WARN]  读取mod_info.json失败: {mod_path} - {str(e)}")
         return {}
+
+
+def check_source_folders() -> dict:
+    """
+    检查source文件夹下的src和jar子文件夹
+    
+    Returns:
+        dict: 检测结果
+    """
+    from src.common.config_utils import get_directory
+    from src.common.logger_utils import get_logger
+    
+    logger = get_logger("file_utils")
+    result = {
+        "english_src": False,
+        "english_jar": False,
+        "chinese_src": False,
+        "chinese_jar": False
+    }
+    
+    # 从配置中获取source目录路径
+    source_path = get_directory("source")
+    if not source_path:
+        logger.error("获取source目录路径失败")
+        return result
+    
+    # 检查英文源文件夹
+    english_path = os.path.join(source_path, "English")
+    if os.path.exists(english_path):
+        if os.path.exists(os.path.join(english_path, "src")):
+            result["english_src"] = True
+        if os.path.exists(os.path.join(english_path, "jar")):
+            result["english_jar"] = True
+    
+    # 检查中文源文件夹
+    chinese_path = os.path.join(source_path, "Chinese")
+    if os.path.exists(chinese_path):
+        if os.path.exists(os.path.join(chinese_path, "src")):
+            result["chinese_src"] = True
+        if os.path.exists(os.path.join(chinese_path, "jar")):
+            result["chinese_jar"] = True
+    
+    return result
 
 
 def get_mod_id_from_folder(folder_path: str) -> str:
@@ -1297,7 +1485,7 @@ def get_mod_id_from_folder(folder_path: str) -> str:
     return mod_id
 
 
-def _extract_strings_rules(rules: dict) -> dict:
+def _extract_strings_rules(rules: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
     从规则字典中提取字符串规则
 
@@ -1347,7 +1535,7 @@ def copy_to_rule_folder(source_file: str, rule_path: str, language: str) -> bool
         return False
 
 
-def _extract_strings_rules_list(rules: dict) -> list:
+def _extract_strings_rules_list(rules: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     从规则字典中提取字符串规则，返回列表格式
     
@@ -1372,87 +1560,112 @@ def _extract_strings_rules_list(rules: dict) -> list:
                 return mappings
             elif isinstance(mappings, dict):
                 return [mappings]
+        elif "rules" in rules:
+            # 格式3: {"id": "mod_id", "rules": [{"id": "rule_id", "original": "source_string", "translated": "target_string"}]}
+            rules_list = rules["rules"]
+            if isinstance(rules_list, list):
+                return rules_list
+            elif isinstance(rules_list, dict):
+                return [rules_list]
         else:
             # 格式2: {"rule_id": {"source": "source_string", "target": "target_string"}}
             # 转换为新格式列表
             result = []
-            for rule_id, rule in rules.items():
-                if isinstance(rule, dict):
-                    # 转换为新格式
-                    new_rule = {
-                        "id": rule_id,
-                        "original": rule.get("source", rule.get("original", "")),
-                        "translated": rule.get("target", rule.get("translated", "")),
-                        "status": "translated" if rule.get("target") or rule.get("translated") else "unmapped",
-                        "context": rule.get("context", {})
-                    }
-                    result.append(new_rule)
+            for rule_id, rule_content in rules.items():
+                if isinstance(rule_content, dict):
+                    rule_content["id"] = rule_id
+                    result.append(rule_content)
             return result
     return []
 
 
-def load_mapping_rules(rules_path: str) -> list:
+def load_mapping_rules(rules_path: Any) -> List[Dict[str, Any]]:
     """
-    加载映射规则文件
-
+    加载映射规则文件，支持多种输入格式
+    
     Args:
-        rules_path: 映射规则文件路径或包含映射规则文件的目录
-
+        rules_path: 规则文件路径、规则文件夹路径或包含路径的列表
+    
     Returns:
-        list: 映射规则列表，支持包含未映射标记的规则
+        list: 映射规则列表
     """
-    mapping_rules = []
-    import yaml
-
-    try:
-        if os.path.isfile(rules_path):
-            # 如果是文件，直接加载
-            file_ext = os.path.splitext(rules_path)[1].lower()
-            
-            if file_ext in [".json"]:
-                # JSON格式
-                with open(rules_path, "r", encoding="utf-8") as f:
-                    rules = json.load(f)
-                    if isinstance(rules, dict):
-                        # 处理字典格式
-                        mapping_rules.extend(_extract_strings_rules_list(rules))
-                    elif isinstance(rules, list):
-                        # 处理列表格式
-                        mapping_rules.extend(rules)
-            elif file_ext in [".yaml", ".yml"]:
-                # YAML格式
-                with open(rules_path, "r", encoding="utf-8") as f:
-                    yaml_data = yaml.safe_load(f)
-                    if isinstance(yaml_data, dict):
-                        # 处理带有版本信息的YAML格式
-                        if "mappings" in yaml_data:
-                            yaml_rules = yaml_data["mappings"]
-                            if isinstance(yaml_rules, list):
-                                mapping_rules.extend(yaml_rules)
-                            elif isinstance(yaml_rules, dict):
-                                mapping_rules.append(yaml_rules)
-                        else:
-                            # 直接处理字典格式
-                            mapping_rules.extend(_extract_strings_rules_list(yaml_data))
-                    elif isinstance(yaml_data, list):
-                        # 处理列表格式
-                        mapping_rules.extend(yaml_data)
-        elif os.path.isdir(rules_path):
-            # 如果是目录，遍历所有支持的文件
-            for file_name in os.listdir(rules_path):
-                file_path = os.path.join(rules_path, file_name)
-                if os.path.isfile(file_path):
-                    file_ext = os.path.splitext(file_name)[1].lower()
-                    if file_ext in [".json", ".yaml", ".yml"]:
-                        # 递归加载文件
-                        file_rules = load_mapping_rules(file_path)
-                        mapping_rules.extend(file_rules)
-
-        print(f"[LIST] 加载映射规则：共 {len(mapping_rules)} 条规则")
+    mapping_rules: List[Dict[str, Any]] = []
+    
+    # 支持的规则文件扩展名
+    supported_extensions = ['.json', '.yaml', '.yml']
+    
+    # 如果是列表，遍历列表中的所有路径
+    if isinstance(rules_path, list):
+        for path in rules_path:
+            mapping_rules.extend(load_mapping_rules(path))
         return mapping_rules
-    except Exception as e:
-        print(f"[WARN]  加载映射规则失败: {rules_path} - {str(e)}")
-        return []
-
-
-
+    
+    # 如果是目录，遍历目录下所有YAML和JSON文件
+    if os.path.isdir(rules_path):
+        # 遍历规则目录下的所有文件
+        for root, dirs, files in os.walk(rules_path):
+            for file in files:
+                if any(file.endswith(ext) for ext in supported_extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        # 根据文件扩展名选择解析方法
+                        if file.endswith('.json'):
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                rules_data = json.load(f)
+                        else:  # YAML文件
+                            import yaml
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                rules_data = yaml.safe_load(f)
+                        
+                        # 处理规则文件中的id字段
+                        mod_id = None
+                        if isinstance(rules_data, dict) and "id" in rules_data:
+                            mod_id = rules_data["id"]
+                            # 验证mod_id是否存在于全局映射表中
+                            from src.init_mode.core import get_mod_info_by_id
+                            mod_info = get_mod_info_by_id(mod_id)
+                            if mod_info:
+                                print(f"[OK] 规则文件关联到mod: {mod_info.name} (id: {mod_id})")
+                            else:
+                                print(f"[WARN]  规则文件中的id {mod_id} 未找到对应的mod信息")
+                        
+                        # 提取规则
+                        extracted_rules = _extract_strings_rules_list(rules_data)
+                        mapping_rules.extend(extracted_rules)
+                        print(f"[OK] 加载规则文件: {file_path}")
+                    except Exception as e:
+                        print(f"[WARN]  加载规则文件失败: {file_path} - {e}")
+    elif os.path.isfile(rules_path):
+        # 如果是单个文件，直接加载
+        try:
+            # 根据文件扩展名选择解析方法
+            if rules_path.endswith('.json'):
+                with open(rules_path, 'r', encoding='utf-8') as f:
+                    rules_data = json.load(f)
+            else:  # YAML文件
+                import yaml
+                with open(rules_path, 'r', encoding='utf-8') as f:
+                    rules_data = yaml.safe_load(f)
+            
+            # 处理规则文件中的id字段
+            mod_id = None
+            if isinstance(rules_data, dict) and "id" in rules_data:
+                mod_id = rules_data["id"]
+                # 验证mod_id是否存在于全局映射表中
+                from src.init_mode.core import get_mod_info_by_id
+                mod_info = get_mod_info_by_id(mod_id)
+                if mod_info:
+                    print(f"[OK] 规则文件关联到mod: {mod_info.name} (id: {mod_id})")
+                else:
+                    print(f"[WARN]  规则文件中的id {mod_id} 未找到对应的mod信息")
+            
+            # 提取规则
+            extracted_rules = _extract_strings_rules_list(rules_data)
+            mapping_rules.extend(extracted_rules)
+            print(f"[OK] 加载规则文件: {rules_path}")
+        except Exception as e:
+            print(f"[WARN]  加载规则文件失败: {rules_path} - {e}")
+    else:
+        print(f"[ERROR] 规则路径不存在: {rules_path}")
+    
+    return mapping_rules

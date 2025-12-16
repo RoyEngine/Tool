@@ -3,7 +3,7 @@
 """
 本地化工具主入口
 
-提供Extract和Extend两种模式的选择和执行。
+提供Extract、Extend和Decompile三种模式的选择和执行。
 
 使用方法：
 python main.py [模块名称] [参数]
@@ -11,6 +11,7 @@ python main.py [模块名称] [参数]
 模块列表：
 - extract: 执行Extract模式，用于提取字符串
 - extend: 执行Extend模式，用于映射字符串
+- decompile: 执行Decompile模式，用于反编译或提取JAR文件
 
 详细帮助：
 python main.py -h
@@ -30,6 +31,7 @@ from src.common.logger_utils import setup_logger, get_logger, log_exception  # n
 from src.common.config_utils import load_config, get_directory, validate_directories  # noqa: E402
 from src.extend_mode.core import run_extend_sub_flow  # noqa: E402
 from src.extract_mode.core import run_extract_sub_flow  # noqa: E402
+from src.decompile_mode.core import run_decompile_sub_flow  # noqa: E402
 
 # 设置全局日志记录器
 logger = setup_logger("localization_tool")
@@ -37,10 +39,10 @@ logger = setup_logger("localization_tool")
 
 def select_main_mode() -> str:
     """
-    让用户选择主模式(Extract或Extend或高级模式)
+    让用户选择主模式(Extract或Extend或高级模式或Decompile模式)
 
     Returns:
-        str: 选择的模式编号("1"、"2"或"3")
+        str: 选择的模式编号("1"、"2"、"3"或"4")
     """
     print("==========================================")
     print("             本地化工具")
@@ -49,15 +51,16 @@ def select_main_mode() -> str:
     print("1. Extract模式(仅提取字符串，默认简洁模式)")
     print("2. Extend模式(执行映射流程，默认简洁模式)")
     print("3. 高级模式(自定义提取/映射，可配置粒度/主体)")
+    print("4. Decompile模式(执行JAR文件反编译/提取)")
     print("==========================================")
 
     while True:
-        choice = input("输入数字(1/2/3，直接回车默认选1)：").strip()
+        choice = input("输入数字(1/2/3/4，直接回车默认选1)：").strip()
         if not choice:  # 直接回车，默认选1
             return "1"
-        elif choice in ["1", "2", "3"]:
+        elif choice in ["1", "2", "3", "4"]:
             return choice
-        print(f"输入无效，请输入正确的数字(1/2/3)！")
+        print(f"输入无效，请输入正确的数字(1/2/3/4)！")
 
 
 def select_extract_sub_flow() -> str:
@@ -84,7 +87,12 @@ def select_extract_sub_flow() -> str:
     else:
         print("❌ 未检测到source/English/src或jar文件夹，请先准备源文件")
     
-    print("📤 提取结果将保存到：主目录/Localization_File/output/Extract_English/")
+    from src.common.config_utils import get_directory
+    output_root = get_directory("output")
+    if output_root:
+        print(f"📤 提取结果将保存到：{output_root}/Extract_English/")
+    else:
+        print("📤 提取结果将保存到：主目录/Localization_File/output/Extract_English/")
     print("   包含：字符串映射规则文件 + 流程报告 + mod_info.json")
     print("==========================================")
     print("请选择提取语言：")
@@ -113,13 +121,14 @@ def select_extend_sub_flow() -> str:
     
     # 二级菜单：直接进入简洁模式的映射方向选择
     print("\n==========================================")
-    print("            Extend模式 - 简洁模式")
+    print("        Extend模式 - 简洁模式")
     print("==========================================")
     
     # 显示检测结果
     print("🔍 正在检测主目录下的source和rule文件夹...")
-    rule_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "rule")
-    if os.path.exists(rule_path):
+    from src.common.config_utils import get_directory
+    rule_path = get_directory("rules")
+    if rule_path and os.path.exists(rule_path):
         print("✅ 检测到rule文件夹，将优先使用映射规则文件")
     else:
         print("❌ 未检测到rule文件夹，将直接检测src/jar文件夹")
@@ -129,7 +138,12 @@ def select_extend_sub_flow() -> str:
     if detection_result["english_src"] or detection_result["english_jar"]:
         print("✅ 检测到source/English文件夹，可进行英文相关映射")
     
-    print("📤 映射结果将保存到：主目录/Localization_File/output/Extend_xxx/")
+    from src.common.config_utils import get_directory
+    output_root = get_directory("output")
+    if output_root:
+        print(f"📤 映射结果将保存到：{output_root}/Extend_xxx/")
+    else:
+        print("📤 映射结果将保存到：主目录/Localization_File/output/Extend_xxx/")
     print("   包含：映射后的源文件夹 + 字符串映射规则文件 + 流程报告 + mod_info.json")
     print("==========================================")
     
@@ -157,6 +171,50 @@ def select_extend_sub_flow() -> str:
             else:
                 return "已有英文src文件夹映射流程"
         print(f"输入无效，请输入正确的数字(1/2)！")
+
+
+def select_decompile_sub_flow() -> str:
+    """
+    让用户选择Decompile模式的子流程
+
+    Returns:
+        str: 选择的子流程
+    """
+    # 二级菜单：直接进入Decompile模式的子流程选择
+    print("\n==========================================")
+    print("        Decompile模式 - 操作选择")
+    print("==========================================")
+    
+    print("📋 反编译模式支持以下操作：")
+    print("1. 反编译单个JAR文件")
+    print("2. 反编译目录中所有JAR文件")
+    print("3. 提取单个JAR文件内容")
+    print("4. 提取目录中所有JAR文件内容")
+    print("==========================================")
+    
+    while True:
+        decompile_choice = input("输入数字(1-4，直接回车默认选1)：").strip()
+        if not decompile_choice:  # 直接回车，默认选1
+            decompile_choice = "1"
+        
+        if decompile_choice in ["1", "2", "3", "4"]:
+            sub_flows = {
+                "1": "反编译单个JAR文件",
+                "2": "反编译目录中所有JAR文件",
+                "3": "提取单个JAR文件内容",
+                "4": "提取目录中所有JAR文件内容"
+            }
+            selected_sub_flow = sub_flows[decompile_choice]
+            
+            # 显示执行信息
+            print(f"\n执行配置：")
+            print(f"模式：Decompile")
+            print(f"流程：{selected_sub_flow}")
+            print("==========================================")
+            
+            return selected_sub_flow
+        else:
+            print(f"输入无效，请输入正确的数字(1-4)！")
 
 
 def toggle_advanced_mode() -> None:
@@ -364,11 +422,10 @@ def check_project_structure() -> bool:
         # 回退到当前脚本的项目根目录
         tool_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    # 定义 Localization_File 目录路径(在工具根目录的上级目录)
-    main_root = os.path.dirname(tool_root)
-    localization_file_path = os.path.join(main_root, "Localization_File")
+    # 定义 File 目录路径(在工具根目录下)
+    localization_file_path = os.path.join(tool_root, "File")
     
-    # 定义 Localization_File 下的必要文件夹结构 - 严格按照框架文档
+    # 定义 File 下的必要文件夹结构 - 严格按照框架文档
     localization_folders = [
         # 源文件目录结构
         os.path.join(localization_file_path, "source"),
@@ -557,13 +614,18 @@ def show_output_guide(output_path: str, mode: str, language: str):
         # Extract模式输出
         mod_folder_name = os.path.basename(output_path)
         # 从输出路径中提取mod名称(去掉时间戳前缀)
-        mod_name = '_'.join(os.path.basename(output_path).split('_')[2:])
+        mod_name = '_'.join(os.path.basename(output_path).split('_')[2:]) if len(os.path.basename(output_path).split('_')) >= 3 else os.path.basename(output_path)
         print(f"   1. {language}_mappings.json - 字符串映射规则文件(可用于Extend模式)")
         print(f"   2. {language}_mappings.yaml - 字符串映射规则文件(可用于Extend模式)")
-        # 从输出路径中提取时间戳
-        timestamp = os.path.basename(output_path).split('_')[0] + '_' + os.path.basename(output_path).split('_')[1]
-        print(f"   3. extract_{timestamp}_report.json - 流程报告(含检测结果、执行步骤、耗时)")
-        print(f"   4. mod_info.json - mod信息文件(可用于Extend模式)")
+        # 从输出路径中提取时间戳，用于生成报告文件
+        basename = os.path.basename(output_path)
+        parts = basename.split('_')
+        if len(parts) >= 2:
+            timestamp = parts[0] + '_' + parts[1]
+            print(f"   3. extract_{timestamp}_report.json - 流程报告(含检测结果、执行步骤、耗时)")
+            print(f"   4. mod_info.json - mod信息文件(可用于Extend模式)")
+        else:
+            print(f"   3. mod_info.json - mod信息文件(可用于Extend模式)")
         print("💡 小贴士：")
         print(f"   - 若需映射，可将 {language}_mappings.json 或 {language}_mappings.yaml + mod_info.json复制到rule/{language}/{mod_name}")
         print(f"   - 报告中若标「⚠️」，代表jar反编译时跳过了无效文件，不影响结果")
@@ -652,6 +714,23 @@ def main():
             print("[ERROR] 加载配置文件失败")
             return
         
+        # 导入初始化模块
+        from src.init_mode import run_init_tasks
+        
+        # 获取基础路径
+        base_path = get_directory("tool_root")
+        if not base_path:
+            # 回退到当前脚本的项目根目录
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # 执行初始化任务 - 仅在程序启动阶段执行一次
+        logger.info("开始执行初始化任务")
+        init_result = run_init_tasks(base_path)
+        if init_result['status'] == 'fail':
+            logger.warning(f"初始化任务部分失败，继续执行后续流程")
+        else:
+            logger.info("初始化任务执行成功")
+        
         # 验证目录结构
         if not validate_directories():
             print("[ERROR] 验证目录结构失败")
@@ -663,12 +742,6 @@ def main():
             show_welcome_guide()
         else:
             logger.info("前置检查已默认关闭，直接进入主菜单")
-        
-        # 获取基础路径
-        base_path = get_directory("tool_root")
-        if not base_path:
-            # 回退到当前脚本的项目根目录
-            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # 检查项目结构
         if not check_project_structure():
@@ -685,7 +758,7 @@ def main():
         
         # 解析命令行参数
         parser = argparse.ArgumentParser(
-            description="本地化工具主入口，提供Extract和Extend两种模式",
+            description="本地化工具主入口，提供Extract、Extend和Decompile三种模式",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""示例用法：
 
@@ -697,11 +770,19 @@ python main.py extract -h
 python main.py extend "已有中文src文件夹映射流程"
 python main.py extend -h
 
+=== Decompile模式示例 ===
+python main.py decompile "反编译单个JAR文件"
+python main.py decompile "反编译目录中所有JAR文件"
+python main.py decompile "提取单个JAR文件内容"
+python main.py decompile "提取目录中所有JAR文件内容"
+python main.py decompile -h
+
 === 测试模式示例 ===
 python main.py --test-mode "1,1,1"  # 测试Extract模式-简洁模式-提取英文
 python main.py --test-mode "1,2,1"  # 测试Extract模式-完整模式-已有英文src
 python main.py --test-mode "2,1,1"  # 测试Extend模式-简洁模式-中文映射到英文
 python main.py --test-mode "3,1,1,1"  # 测试高级模式-全部功能-Extract子模式
+python main.py --test-mode "4,1"  # 测试Decompile模式-反编译单个JAR文件
         """,
         )
         
@@ -747,6 +828,25 @@ python main.py --test-mode "3,1,1,1"  # 测试高级模式-全部功能-Extract�
             "  已有中文src文件夹映射流程\n"  
             "  没有中文src文件夹映射流程\n"  
             "  已有中文映射规则文件流程",
+        )
+        
+        # Decompile模式子命令
+        decompile_parser = subparsers.add_parser(
+            "decompile",
+            help="执行Decompile模式，用于反编译或提取JAR文件",
+            description="Decompile模式用于反编译或提取JAR文件\n\n" 
+            "操作模式：\n" 
+            "  简化模式(交互式)：仅显示核心选项，自动检测并执行合适的子流程\n" 
+            "  命令行模式：直接指定子流程类型",
+        )
+        decompile_parser.add_argument(
+            "sub_flow",
+            nargs="?",
+            help="子流程类型，可选值：\n"  
+            "  反编译单个JAR文件\n"  
+            "  反编译目录中所有JAR文件\n"  
+            "  提取单个JAR文件内容\n"  
+            "  提取目录中所有JAR文件内容",
         )
 
         # 解析命令行参数
@@ -827,6 +927,26 @@ python main.py --test-mode "3,1,1,1"  # 测试高级模式-全部功能-Extract�
                 print(f"流程：{sub_flow}")
                 print("==========================================")
                 result = run_extend_sub_flow(sub_flow, base_path)
+        elif args.mode == "decompile":
+            logger.info("选择Decompile模式")
+            if args.sub_flow:
+                # 直接执行指定的子流程
+                logger.info(f"直接执行Decompile子流程：{args.sub_flow}")
+                print(f"\n执行配置：")
+                print(f"模式：Decompile")
+                print(f"流程：{args.sub_flow}")
+                print("==========================================")
+                result = run_decompile_sub_flow(args.sub_flow, base_path)
+            else:
+                # 让用户选择子流程
+                logger.info("用户未指定子流程，显示Decompile子流程选择菜单")
+                sub_flow = select_decompile_sub_flow()
+                logger.info(f"用户选择Decompile子流程：{sub_flow}")
+                print(f"\n执行配置：")
+                print(f"模式：Decompile")
+                print(f"流程：{sub_flow}")
+                print("==========================================")
+                result = run_decompile_sub_flow(sub_flow, base_path)
         else:
             # 没有指定模式，使用交互式菜单
             logger.info("未指定模式，显示主菜单")
@@ -851,7 +971,7 @@ python main.py --test-mode "3,1,1,1"  # 测试高级模式-全部功能-Extract�
                 print(f"流程：{sub_flow}")
                 print("==========================================")
                 result = run_extend_sub_flow(sub_flow, base_path)
-            else:
+            elif mode == "3":
                 # 高级模式
                 sub_flow = select_advanced_mode()
                 logger.info(f"用户选择高级模式子流程：{sub_flow}")
@@ -868,6 +988,15 @@ python main.py --test-mode "3,1,1,1"  # 测试高级模式-全部功能-Extract�
                     print(f"流程：{sub_flow}")
                     print("==========================================")
                     result = run_extend_sub_flow(sub_flow, base_path)
+            elif mode == "4":
+                # Decompile模式
+                sub_flow = select_decompile_sub_flow()
+                logger.info(f"用户选择Decompile子流程：{sub_flow}")
+                print(f"\n执行配置：")
+                print(f"模式：Decompile")
+                print(f"流程：{sub_flow}")
+                print("==========================================")
+                result = run_decompile_sub_flow(sub_flow, base_path)
 
         if result:
             # 记录结果

@@ -35,7 +35,6 @@ from .timestamp_utils import (
 )
 from .jar_utils import (
     is_jar_file,
-    decompile_jar,
     get_decompiler_path,
 )
 from .tree_sitter_utils import (
@@ -91,34 +90,9 @@ from .logger_utils import (
     LoggerConfig,
     LoggerManager,
 )
-from .language_utils import (
-    get_supported_languages,
-    get_language_by_code,
-    get_language_by_name,
-    get_language_by_folder_name,
-    get_default_language,
-    get_language_folders,
-    get_main_directories,
-    is_supported_language,
-    add_language,
-    remove_language,
-    save_language_config,
-)
-from .language_resource import (
-    get_resource,
-    set_resource,
-    save_resource,
-    add_language_resource,
-    remove_language_resource,
-    load_resource,
-    load_all_resources,
-)
-from .language_context import (
-    get_current_language,
-    get_current_language_info,
-    set_language,
-    reset_to_default_language,
-)
+
+# 导入localization_tool主函数
+from .localization_tool import main as localization_main
 
 __all__ = [
     "file_utils",
@@ -146,9 +120,7 @@ __all__ = [
     "get_formatted_timestamp",
     "get_date",
     "get_time",
-    "decompile_utils",
     "is_jar_file",
-    "decompile_jar",
     "get_decompiler_path",
     "tree_sitter_utils",
     "extract_ast_mappings",
@@ -189,32 +161,5 @@ __all__ = [
     "LogLevel",
     "LoggerConfig",
     "LoggerManager",
-    # 语言管理相关功能
-    "language_utils",
-    "get_supported_languages",
-    "get_language_by_code",
-    "get_language_by_name",
-    "get_language_by_folder_name",
-    "get_default_language",
-    "get_language_folders",
-    "get_main_directories",
-    "is_supported_language",
-    "add_language",
-    "remove_language",
-    "save_language_config",
-    # 语言资源相关功能
-    "language_resource",
-    "get_resource",
-    "set_resource",
-    "save_resource",
-    "add_language_resource",
-    "remove_language_resource",
-    "load_resource",
-    "load_all_resources",
-    # 语言上下文相关功能
-    "language_context",
-    "get_current_language",
-    "get_current_language_info",
-    "set_language",
-    "reset_to_default_language",
+    "localization_main",
 ]

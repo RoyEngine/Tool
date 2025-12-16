@@ -3,7 +3,15 @@
 """
 Extend模式核心模块
 
-该模块包含Extend模式的三种子流程调度。
+该模块负责使用映射规则将一种语言映射到另一种语言，支持以下功能：
+1. 基于已有src文件夹进行映射
+2. 基于JAR文件进行映射
+3. 使用映射规则文件进行映射
+4. 支持中英文双向映射
+5. 生成映射报告
+6. 支持多mod并行处理
+
+该模块不再执行初始化操作，仅专注于语言映射功能，初始化操作由init_mode模块统一处理
 """
 
 import os
@@ -12,11 +20,10 @@ from typing import Any, Dict
 
 # 注意：不需要添加sys.path，main.py已经设置了正确的Python搜索路径
 
-from src.common import (create_folders, generate_report,  # noqa: E402, E501
+from src.common import (generate_report,  # noqa: E402, E501
                         get_timestamp, save_report,
                         contains_chinese_in_src,
                         read_mod_info, load_mapping_rules,
-                        rename_mod_folders, restore_backup,
                         setup_logger, get_logger, log_progress, log_result)  # noqa: E402, E501
 from src.common.config_utils import get_directory  # noqa: E402
 
@@ -65,32 +72,7 @@ def run_extend_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]:
     )
 
     try:
-        # 1. 创建必要的文件夹
-        if not create_folders(base_path, "Extend"):
-            report = generate_report(
-                process_id=process_id,
-                mode="Extend",
-                sub_flow=sub_flow,
-                status="fail",
-                data={
-                    "total_count": 0,
-                    "success_count": 0,
-                    "fail_count": 1,
-                    "fail_reasons": ["创建文件夹失败"],
-                },
-            )
-            # 使用新路径保存报告
-            # 使用正确的Localization_File路径（与Localization_Tool同级）
-            localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
-            report_path = os.path.join(localization_file_path, "output", "Extend", "Report")
-            save_report(
-                report,
-                report_path,
-                timestamp,
-            )
-            return report
-
-        # 2. 根据子流程类型执行不同的逻辑
+        # 1. 根据子流程类型执行不同的逻辑
         result = None
         language = "Chinese"
         mapping_direction = "zh2en"
@@ -131,15 +113,8 @@ def run_extend_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]:
                     "fail_reasons": [f"未知子流程: {sub_flow}"],
                 },
             )
-            # 使用新路径保存报告
-            # 使用正确的Localization_File路径（与Localization_Tool同级）
-            localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
-            report_path = os.path.join(localization_file_path, "output", "Extend", "Report")
-            save_report(
-                report,
-                report_path,
-                timestamp,
-            )
+            # 发生异常时，只记录日志，不保存报告到特定目录
+            print(f"[ERROR] {report['data']['fail_reasons'][0]}")
             return report
 
         # 3. 添加mode、language和mapping_direction到结果中，以便main函数调用show_output_guide
@@ -151,22 +126,29 @@ def run_extend_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]:
         if "output_path" not in result:
             result["output_path"] = result.get("data", {}).get("output_path", "")
 
-        # 使用新路径保存报告
-        # 使用正确的Localization_File路径（与Localization_Tool同级）
-        localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
-        new_report_path = os.path.join(localization_file_path, "output", "Extend", "Report")
-        save_report(
-            result, new_report_path, timestamp
-        )
-        
-        # 6. 同时将报告保存到框架要求的output_path中
+        # 只将报告保存到映射文件夹和output_path
         if result.get("output_path"):
-            # 生成报告文件名
+            # 从输出路径中提取模组名称
+            mod_name = os.path.basename(result["output_path"])
+            # 确定映射方向
+            mapping_direction = result.get("mapping_direction", "zh2en")
+            
+            # 构建映射文件夹路径
+            localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
+            # 根据映射方向确定Extend目录
+            extend_dir = f"Extend_{mapping_direction}" if mapping_direction in ["en2zh", "zh2en"] else "Extend"
+            mapping_folder_path = os.path.join(localization_file_path, "output", extend_dir, mod_name)
+            
+            # 保存报告到映射文件夹
+            save_report(
+                result, mapping_folder_path, timestamp, rule_type="mapping", mod_name=mod_name
+            )
+            
+            # 同时将报告保存到output_path中
+            import json
             report_filename = f"extend_{timestamp}_report.json"
             report_filepath = os.path.join(result["output_path"], report_filename)
             
-            # 保存报告到output_path
-            import json
             with open(report_filepath, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             print(f"[OK] 流程报告已生成到: {report_filepath}")
@@ -186,13 +168,8 @@ def run_extend_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]:
                 "fail_reasons": [f"执行过程中发生异常: {str(e)}"],
             },
         )
-        # 使用新路径保存报告
-        # 使用正确的Localization_File路径（与Localization_Tool同级）
-        localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
-        report_path = os.path.join(localization_file_path, "output", "Extend", "Report")
-        save_report(
-            report, report_path, timestamp
-        )
+        # 发生异常时，只记录日志，不保存报告到特定目录
+        print(f"[ERROR] 执行过程中发生异常: {str(e)}")
         return report
 
 
@@ -208,90 +185,40 @@ def _build_mod_mapping(base_path: str, chinese_file_path: str, english_file_path
     Returns:
         dict: 映射关系字典，格式为 {chinese_mod_id: english_mod_path}
     """
-    # 1. 定义函数：递归遍历文件夹，查找包含mod_info.json的mod文件夹
-    def find_mod_folders(directory: str) -> list:
-        """
-        递归查找包含mod_info.json的mod文件夹
-        
-        Args:
-            directory: 要搜索的目录
-            
-        Returns:
-            list: 包含mod_info.json的mod文件夹列表
-        """
-        mod_folders = []
-        for root, dirs, files in os.walk(directory):
-            if "mod_info.json" in files:
-                mod_folders.append(root)
-        return mod_folders
+    # 使用init_mode中的集中式mod映射
+    from src.init_mode import get_mod_mapping
     
-    # 2. 从mod_info.json获取正确的mod_name
-    def get_mod_name(mod_path: str) -> str:
-        """
-        从mod_info.json获取name和version，构建正确的mod_name
-        
-        Args:
-            mod_path: mod文件夹路径
-            
-        Returns:
-            str: 正确的mod_name，格式为name+version
-        """
-        mod_folder_name = os.path.basename(mod_path)
-        mod_info_path = os.path.join(mod_path, "mod_info.json")
-        if os.path.exists(mod_info_path):
-            try:
-                with open(mod_info_path, 'r', encoding='utf-8') as f:
-                    mod_info = json.load(f)
-                    name = mod_info.get("name", mod_folder_name)
-                    version = mod_info.get("version", "unknown")
-                    return f"{name} {version}"
-            except Exception as e:
-                print(f"[WARN]  读取mod_info.json失败: {mod_info_path} - {e}")
-        return mod_folder_name
+    # 获取完整的mod映射
+    mod_mappings = get_mod_mapping()
     
-    # 3. 构建mod_id到mod_path的映射
+    # 构建chinese_mods和english_mods字典
     chinese_mods = {}
     english_mods = {}
-
-    # 递归遍历Chinese文件夹下的所有mod文件夹
-    chinese_mod_folders = find_mod_folders(chinese_file_path)
-    for mod_path in chinese_mod_folders:
-        mod_name = get_mod_name(mod_path)
-
-        # 读取mod_info.json
-        mod_info = read_mod_info(mod_path)
-        if "id" in mod_info:
-            mod_id = mod_info["id"]
+    
+    # 遍历mod_mappings，分类chinese和english mods
+    for mod_id, mod_info in mod_mappings.items():
+        if mod_info["language"] == "Chinese" and mod_info["source_type"] == "source":
+            mod_path = mod_info["mod_path"]
+            mod_name = f"{mod_info['mod_info'].name} {mod_info['mod_info'].version}"
             chinese_mods[mod_id] = {
                 "path": mod_path,
                 "name": mod_name,
-                "version": mod_info.get("version", "unknown"),
-                "mod_info": mod_info
+                "version": mod_info["mod_info"].version,
+                "mod_info": mod_info["mod_info"].to_dict()
             }
-            print(f"[LIST] 发现中文mod: {mod_name} (id: {mod_id}, version: {chinese_mods[mod_id]['version']})")
-        else:
-            print(f"[WARN]  中文mod {mod_name} 缺少id信息")
-
-    # 递归遍历English文件夹下的所有mod文件夹
-    english_mod_folders = find_mod_folders(english_file_path)
-    for mod_path in english_mod_folders:
-        mod_name = get_mod_name(mod_path)
-
-        # 读取mod_info.json
-        mod_info = read_mod_info(mod_path)
-        if "id" in mod_info:
-            mod_id = mod_info["id"]
+            print(f"[LIST] 发现中文mod: {mod_name} (id: {mod_id}, version: {mod_info['mod_info'].version})")
+        elif mod_info["language"] == "English" and mod_info["source_type"] == "source":
+            mod_path = mod_info["mod_path"]
+            mod_name = f"{mod_info['mod_info'].name} {mod_info['mod_info'].version}"
             english_mods[mod_id] = {
                 "path": mod_path,
                 "name": mod_name,
-                "version": mod_info.get("version", "unknown"),
-                "mod_info": mod_info
+                "version": mod_info["mod_info"].version,
+                "mod_info": mod_info["mod_info"].to_dict()
             }
-            print(f"[LIST] 发现英文mod: {mod_name} (id: {mod_id}, version: {english_mods[mod_id]['version']})")
-        else:
-            print(f"[WARN]  英文mod {mod_name} 缺少id信息")
-
-    # 4. 建立映射关系
+            print(f"[LIST] 发现英文mod: {mod_name} (id: {mod_id}, version: {mod_info['mod_info'].version})")
+    
+    # 建立映射关系
     mapping = {}
     for mod_id, chinese_mod in chinese_mods.items():
         if mod_id in english_mods:
@@ -354,25 +281,6 @@ def _process_existing_chinese_src(
             )
         chinese_file_path = os.path.join(source_dir, "Chinese")
         english_file_path = os.path.join(source_dir, "English")
-
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(chinese_file_path)
-        rename_mod_folders(english_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_dir = get_backup_directory("extend")
-        backup_chinese_file_path = os.path.join(backup_dir, "Chinese")
-        backup_english_file_path = os.path.join(backup_dir, "English")
-        rename_mod_folders(backup_chinese_file_path)
-        rename_mod_folders(backup_english_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        from src.common.config_utils import get_backup_directory, get_source_directory
-        backup_path = get_backup_directory("extend")
-        restore_backup(backup_path, get_source_directory("extend", "auto"))
 
         # 4. 获取映射规则文件路径
         strings_path = os.path.join(base_path, "project", "Extend", "Strings")
@@ -495,42 +403,7 @@ def _process_existing_chinese_src(
         )
 
 
-def _find_jar_files(chinese_file_path: str) -> list:
-    """
-    在Chinese文件夹下查找所有JAR文件
-
-    Args:
-        chinese_file_path: Chinese文件夹路径
-
-    Returns:
-        list: JAR文件路径列表
-    """
-    jar_files = []
-    for root, dirs, files in os.walk(chinese_file_path):
-        for file in files:
-            if file.endswith('.jar'):
-                jar_files.append(os.path.join(root, file))
-    return jar_files
-
-
-def _decompile_jar_files(jar_files: list) -> None:
-    """
-    反编译JAR文件，在mod文件夹下创建jar文件夹
-
-    Args:
-        jar_files: JAR文件路径列表
-    """
-    print(f"ℹ️  找到 {len(jar_files)} 个JAR文件，将进行反编译")
-    for jar_file in jar_files:
-        # 获取mod文件夹路径(JAR文件所在目录)
-        mod_dir = os.path.dirname(jar_file)
-        # 创建jar文件夹
-        jar_dir = os.path.join(mod_dir, "jar")
-        os.makedirs(jar_dir, exist_ok=True)
-        print(f"[DIR] 在 {os.path.basename(mod_dir)} 文件夹下创建jar文件夹: {jar_dir}")
-        # 使用jar_utils.py中的函数进行JAR反编译
-        from src.common.jar_utils import decompile_jar
-        decompile_jar(jar_file, jar_dir)
+# 移除反编译相关功能，反编译功能已迁移到decompile_mode模块
 
 
 def _process_mod_for_mapping(chinese_mod_path: str, english_mod_path: str) -> None:
@@ -685,34 +558,7 @@ def _process_no_chinese_src(
                     "fail_reasons": ["无法获取源目录"],
                 },
             )
-        chinese_file_path = os.path.join(source_dir, "Chinese")
         english_file_path = os.path.join(source_dir, "English")
-
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(chinese_file_path)
-        rename_mod_folders(english_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_dir = get_backup_directory("extend")
-        backup_chinese_file_path = os.path.join(backup_dir, "Chinese")
-        backup_english_file_path = os.path.join(backup_dir, "English")
-        rename_mod_folders(backup_chinese_file_path)
-        rename_mod_folders(backup_english_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = os.path.join(base_path, "project", "Extend", "File_backup")
-        restore_backup(backup_path, os.path.join(base_path, "project", "Extend", "File"))
-
-        # 4. 查找JAR文件
-        jar_files = _find_jar_files(chinese_file_path)
-
-        # 5. 反编译JAR文件
-        if jar_files:
-            print("[NOTE] 开始反编译JAR文件...")
-            _decompile_jar_files(jar_files)
 
         # 6. 基于mod_info.json中的id建立映射关系
         mod_mapping = _build_mod_mapping(base_path, chinese_file_path, english_file_path)
@@ -846,25 +692,6 @@ def _process_existing_chinese_rules(
         # 1. 获取Chinese和English文件夹路径
         chinese_file_path = os.path.join(base_path, "project", "Extend", "File", "Chinese")
         english_file_path = os.path.join(base_path, "project", "Extend", "File", "English")
-        
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(chinese_file_path)
-        rename_mod_folders(english_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_chinese_file_path = os.path.join(base_path, "project", "Extend", "File_backup", "Chinese")
-        backup_english_file_path = os.path.join(base_path, "project", "Extend", "File_backup", "English")
-        rename_mod_folders(backup_chinese_file_path)
-        rename_mod_folders(backup_english_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        from src.common.config_utils import get_backup_directory
-        backup_path = get_backup_directory("extend")
-        from src.common.config_utils import get_source_directory
-        restore_backup(backup_path, get_source_directory("extend", "auto"))
         
         # 4. 获取映射规则文件路径
         strings_path = os.path.join(base_path, "project", "Extend", "Strings")
@@ -1090,24 +917,6 @@ def _process_existing_english_src(
         english_file_path = os.path.join(source_dir, "English")
         chinese_file_path = os.path.join(source_dir, "Chinese")
 
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(english_file_path)
-        rename_mod_folders(chinese_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_dir = get_backup_directory("extend")
-        backup_english_file_path = os.path.join(backup_dir, "English")
-        backup_chinese_file_path = os.path.join(backup_dir, "Chinese")
-        rename_mod_folders(backup_english_file_path)
-        rename_mod_folders(backup_chinese_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = get_backup_directory("extend")
-        restore_backup(backup_path, get_source_directory("extend", "auto"))
-
         # 4. 获取映射规则文件路径
         strings_path = os.path.join(base_path, "project", "Extend", "Strings")
         english_strings_path = os.path.join(strings_path, "English")
@@ -1259,31 +1068,19 @@ def _process_no_english_src(
         english_file_path = os.path.join(source_dir, "English")
         chinese_file_path = os.path.join(source_dir, "Chinese")
 
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(english_file_path)
-        rename_mod_folders(chinese_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_dir = get_backup_directory("extend")
-        backup_english_file_path = os.path.join(backup_dir, "English")
-        backup_chinese_file_path = os.path.join(backup_dir, "Chinese")
-        rename_mod_folders(backup_english_file_path)
-        rename_mod_folders(backup_chinese_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = get_backup_directory("extend")
-        restore_backup(backup_path, get_source_directory("extend", "auto"))
-
         # 4. 查找JAR文件
-        jar_files = _find_jar_files(english_file_path)
+        from src.decompile_mode.core import find_jar_files, decompile_all_jars
+        jar_files = find_jar_files(english_file_path)
 
         # 5. 反编译JAR文件
-        if jar_files:
+        if jar_files and english_file_path:
             print("[NOTE] 开始反编译JAR文件...")
-            _decompile_jar_files(jar_files)
+            # 使用decompile_mode API反编译所有JAR文件
+            for jar_file in jar_files:
+                jar_dir = os.path.join(os.path.dirname(jar_file), "jar")
+                os.makedirs(jar_dir, exist_ok=True)
+                from src.decompile_mode.core import decompile_single_jar
+                decompile_single_jar(jar_file, jar_dir)
 
         # 6. 基于mod_info.json中的id建立映射关系
         mod_mapping = _build_mod_mapping(base_path, english_file_path, chinese_file_path)
@@ -1373,24 +1170,6 @@ def _process_existing_english_rules(
         # 1. 获取English和Chinese文件夹路径
         english_file_path = os.path.join(base_path, "project", "Extend", "File", "English")
         chinese_file_path = os.path.join(base_path, "project", "Extend", "File", "Chinese")
-        
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(english_file_path)
-        rename_mod_folders(chinese_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_english_file_path = os.path.join(base_path, "project", "Extend", "File_backup", "English")
-        backup_chinese_file_path = os.path.join(base_path, "project", "Extend", "File_backup", "Chinese")
-        rename_mod_folders(backup_english_file_path)
-        rename_mod_folders(backup_chinese_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        from src.common.config_utils import get_backup_directory, get_source_directory
-        backup_path = get_backup_directory("extend")
-        restore_backup(backup_path, get_source_directory("extend", "auto"))
         
         # 4. 获取映射规则文件路径
         strings_path = os.path.join(base_path, "project", "Extend", "Strings")

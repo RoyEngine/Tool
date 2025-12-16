@@ -3,7 +3,15 @@
 """
 Extract模式核心模块
 
-该模块包含Extract模式的四种子流程调度。
+该模块负责从源码中提取字符串并生成映射规则，支持以下功能：
+1. 从src文件夹提取字符串
+2. 从JAR文件提取字符串（通过decompile_mode API）
+3. 生成YAML和JSON格式的映射规则
+4. 支持中英文内容提取
+5. 生成提取报告
+6. 支持多mod并行处理
+
+该模块不再执行初始化操作，仅专注于字符串提取功能，初始化操作由init_mode模块统一处理
 """
 
 import os
@@ -14,12 +22,16 @@ from typing import Any, Dict, List
 # 注意：不需要添加sys.path，main.py已经设置了正确的Python搜索路径
 
 from src.common import (
-    create_folders, generate_report,  # noqa: E402, E501
+    generate_report,  # noqa: E402, E501
     get_timestamp, save_report, contains_chinese_in_src, find_src_folders,
-    decompile_jar, rename_mod_folders, restore_backup,
     setup_logger, get_logger, log_progress, log_result)  # noqa: E402, E501
+
+# 导入反编译模式模块
+from src.decompile_mode.core import decompile_single_jar
 from src.common.config_utils import get_directory  # noqa: E402
-from src.extract_mode.extractor import extract_strings, save_extracted_strings
+# 导入流程执行器
+from src.common.flow_executor import FlowManager, FlowResult
+# 移除对备用提取实现的引用，直接使用Tree-sitter实现
 
 # 设置日志记录器
 logger = setup_logger("extract_mode")
@@ -41,16 +53,18 @@ def _extract_strings_from_source(source_path: str, language: str, base_path: str
     # 获取mod文件夹
     mod_folder = os.path.dirname(source_path)
     
-    # 从mod_info.json读取name和version字段，构建正确的mod_name
+    # 从mod_info.json读取name、version和id字段，构建正确的mod_name
     mod_info_path = os.path.join(mod_folder, "mod_info.json")
     mod_name = os.path.basename(mod_folder)  # 默认使用文件夹名
     version = "unknown"
+    mod_id = ""
     if os.path.exists(mod_info_path):
         try:
             with open(mod_info_path, 'r', encoding='utf-8') as f:
                 mod_info = json.load(f)
                 mod_name = mod_info.get("name", mod_name)
                 version = mod_info.get("version", "unknown")
+                mod_id = mod_info.get("id", "")
                 # 按照文档要求，mod_name应为name+version
                 mod_name = f"{mod_name} {version}"
         except Exception as e:
@@ -105,7 +119,7 @@ def _extract_strings_from_source(source_path: str, language: str, base_path: str
         shutil.copy(mod_info_path, os.path.join(output_path, "mod_info.json"))
     
     # 生成映射规则文件到rule文件夹
-    generate_mapping_rules(yaml_mappings, base_path, language, mod_name, version, timestamp)
+    generate_mapping_rules(yaml_mappings, base_path, language, mod_name, version, timestamp, mod_id)
     
     # 提取结果统计
     extracted_result = {
@@ -168,22 +182,7 @@ def _process_extract_flow(language: str, base_path: str, timestamp: str, report:
                 },
             )
         
-        # 2. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(language_file_path)
-        
-        # 3. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        from src.common.config_utils import get_backup_directory
-        backup_dir = get_backup_directory("extract")
-        backup_language_file_path = os.path.join(backup_dir, language)
-        rename_mod_folders(backup_language_file_path)
-        
-        # 4. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        from src.common.config_utils import get_backup_directory
-        backup_path = get_backup_directory("extract")
-        restore_backup(backup_path, source_dir)
+        # 2. 查找src文件夹
         
         # 4. 查找src文件夹
         src_folders = find_src_folders(language_file_path)
@@ -295,7 +294,7 @@ def _process_extract_flow(language: str, base_path: str, timestamp: str, report:
                 # 反编译所有JAR文件
                 for jar_file in jar_files:
                     print(f"[INFO] 反编译JAR文件: {os.path.basename(jar_file)}")
-                    decompile_jar(jar_file, jar_dir)
+                    decompile_single_jar(jar_file, jar_dir)
                 
                 # 检测jar文件夹是否包含目标语言内容
                 current_extract_source = mod_folder
@@ -319,11 +318,16 @@ def _process_extract_flow(language: str, base_path: str, timestamp: str, report:
                     results.append(extract_result["data"])
                     
                     # 将源文件夹移动到Complete目录
-                    # 使用正确的Localization_File路径（与Localization_Tool同级）
-                    localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
-                    complete_path = os.path.join(localization_file_path, "output", "Extract_Complete")
-                    from src.common.file_utils import move_to_complete
-                    move_to_complete(current_extract_source, complete_path, language, timestamp)
+                    # 使用配置管理系统获取正确的路径
+                    from src.common.config_utils import get_directory
+                    output_root = get_directory("output")
+                    if output_root:
+                        complete_path = os.path.join(output_root, "Extract_Complete")
+                    else:
+                        # 回退到旧的路径计算方式
+                        localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
+                        complete_path = os.path.join(localization_file_path, "output", "Extract_Complete")
+                    
                 else:
                     results.append(extract_result["data"])
         
@@ -504,7 +508,7 @@ def _process_extract_flow(language: str, base_path: str, timestamp: str, report:
         )
 
 
-def generate_mapping_rules(yaml_mappings: List[Dict[str, Any]], base_path: str, language: str, mod_name: str, version: str, timestamp: str) -> None:
+def generate_mapping_rules(yaml_mappings: List[Dict[str, Any]], base_path: str, language: str, mod_name: str, version: str, timestamp: str, mod_id: str = "") -> None:
     """
     生成映射规则文件并保存到rule文件夹
     
@@ -533,10 +537,16 @@ def generate_mapping_rules(yaml_mappings: List[Dict[str, Any]], base_path: str, 
     json_filename = f"{language}_mappings.json"
     json_filepath = os.path.join(rule_path, json_filename)
     
+    # 构建包含id字段的规则文件内容
+    rules_with_id = {
+        "id": mod_id,
+        "rules": yaml_mappings
+    }
+    
     # 保存映射规则到rule文件夹
-    if save_yaml_mappings(yaml_mappings, rule_filepath):
+    if save_yaml_mappings(rules_with_id, rule_filepath):
         print(f"[OK] 映射规则文件已生成到: {rule_filepath}")
-        print(f"[INFO] 规则文件包含 {len(yaml_mappings)} 个条目，其中 {sum(1 for m in yaml_mappings if m['status'] == 'unmapped')} 个未映射")
+        print(f"[INFO] 规则文件包含id: {mod_id}，{len(yaml_mappings)} 个条目，其中 {sum(1 for m in yaml_mappings if m['status'] == 'unmapped')} 个未映射")
     else:
         print(f"[ERROR] 保存YAML映射规则文件失败: {rule_filepath}")
     
@@ -544,7 +554,7 @@ def generate_mapping_rules(yaml_mappings: List[Dict[str, Any]], base_path: str, 
     import json
     try:
         with open(json_filepath, 'w', encoding='utf-8') as f:
-            json.dump(yaml_mappings, f, ensure_ascii=False, indent=2)
+            json.dump(rules_with_id, f, ensure_ascii=False, indent=2)
         print(f"[OK] JSON映射规则文件已生成到: {json_filepath}")
     except Exception as e:
         print(f"[ERROR] 保存JSON映射规则文件失败: {json_filepath} - {e}")
@@ -591,28 +601,8 @@ def run_extract_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]
     )
 
     try:
-        # 1. 创建必要的文件夹
-        if not create_folders(base_path, "Extract"):
-            report = generate_report(
-                process_id=process_id,
-                mode="Extract",
-                sub_flow=sub_flow,
-                status="fail",
-                data={
-                    "total_count": 0,
-                    "success_count": 0,
-                    "fail_count": 1,
-                    "fail_reasons": ["创建文件夹失败"],
-                },
-            )
-            # 使用新路径保存报告
-            report_path = os.path.join(base_path, "Localization_File", "output", "Extract", "Report")
-            save_report(
-                report,
-                report_path,
-                timestamp,
-            )
-            return report
+        # 1. 创建必要的文件夹 - 现在由FlowExecutor统一处理
+        # 2. 根据子流程类型执行不同的逻辑
 
         # 2. 根据子流程类型执行不同的逻辑
         if sub_flow in ["已有英文src文件夹提取流程", "没有英文src文件夹提取流程", "英文提取流程"]:
@@ -648,7 +638,9 @@ def run_extract_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]
                 },
             )
             # 使用新路径保存报告
-            report_path = os.path.join(base_path, "Localization_File", "output", "Extract", "Report")
+            # 使用正确的Localization_File路径（与Localization_Tool同级）
+            localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
+            report_path = os.path.join(localization_file_path, "output", "Extract", "Report")
             save_report(
                 report,
                 report_path,
@@ -664,19 +656,25 @@ def run_extract_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]
         if "output_path" not in result:
             result["output_path"] = result.get("data", {}).get("output_path", "")
 
-        # 使用新路径保存报告
-        new_report_path = os.path.join(base_path, "Localization_File", "output", "Extract", "Report")
-        save_report(
-            result, new_report_path, timestamp
-        )
-        
-        # 4. 同时将报告保存到框架要求的output_path中
+        # 只将报告保存到规则文件目录
         if result.get("output_path"):
-            # 生成报告文件名
+            # 从输出路径中提取模组名称
+            mod_name = os.path.basename(result["output_path"])
+            # 从报告中提取语言类型
+            language = result.get("language", "English")
+            # 构建规则文件目录路径
+            localization_file_path = os.path.join(os.path.dirname(base_path), "Localization_File")
+            rule_file_path = os.path.join(localization_file_path, "rule", language, mod_name)
+            
+            # 保存报告到规则文件目录
+            save_report(
+                result, rule_file_path, timestamp, rule_type="regular", mod_name=mod_name, language=language
+            )
+            
+            # 同时将报告保存到output_path中(与规则文件保持一致)
             report_filename = f"extract_{timestamp}_report.json"
             report_filepath = os.path.join(result["output_path"], report_filename)
             
-            # 保存报告到output_path
             with open(report_filepath, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             print(f"[OK] 流程报告已生成到: {report_filepath}")
@@ -696,11 +694,8 @@ def run_extract_sub_flow(sub_flow: str, base_path: str = None) -> Dict[str, Any]
                 "fail_reasons": [f"执行过程中发生异常: {str(e)}"],
             },
         )
-        # 使用新路径保存报告
-        report_path = os.path.join(base_path, "Localization_File", "output", "Extract", "Report")
-        save_report(
-            report, report_path, timestamp
-        )
+        # 发生异常时，只记录日志，不保存报告到特定目录
+        print(f"[ERROR] 执行过程中发生异常: {str(e)}")
         return report
 
 
@@ -750,20 +745,6 @@ def _process_existing_english_src(
                 },
             )
         
-        # 3. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(english_file_path)
-        
-        # 4. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_english_file_path = os.path.join(base_path, "project", "Extract", "File_backup", "English")
-        rename_mod_folders(backup_english_file_path)
-        
-        # 5. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = os.path.join(base_path, "project", "Extract", "File_backup")
-        restore_backup(backup_path, os.path.join(base_path, "project", "Extract", "File"))
-        
         # 5. 查找src文件夹
         src_folders = find_src_folders(english_file_path)
         if not src_folders:
@@ -800,9 +781,10 @@ def _process_existing_english_src(
             except Exception as e:
                 print(f"[WARN]  读取mod_info.json失败: {mod_info_path} - {e}")
         
-        # 8. 提取字符串(使用第一个找到的src文件夹)
-        extracted_data = extract_strings(src_folder, "English", base_path)
-        if not extracted_data or "metadata" not in extracted_data:
+        # 8. 提取字符串(使用Tree-sitter直接提取)
+        from src.common.tree_sitter_utils import extract_ast_mappings
+        ast_mappings = extract_ast_mappings(src_folder)
+        if not ast_mappings:
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -816,9 +798,15 @@ def _process_existing_english_src(
                 },
             )
         
-        # 8. 保存提取的字符串到规则文件
+        # 9. 生成初始YAML映射
+        from src.common.yaml_utils import generate_initial_yaml_mappings, save_yaml_mappings
+        yaml_mappings = generate_initial_yaml_mappings(ast_mappings, mark_unmapped=True)
+        
+        # 10. 保存提取的字符串到规则文件
         strings_output_path = os.path.join(base_path, "project", "Extract", "Strings", "English")
-        if not save_extracted_strings(extracted_data, strings_output_path, "English", mod_folder_name=mod_folder_name, version=version, timestamp=timestamp):
+        os.makedirs(strings_output_path, exist_ok=True)
+        yaml_file_path = os.path.join(strings_output_path, f"{mod_folder_name}_{version}_English_mappings.yaml")
+        if not save_yaml_mappings(yaml_mappings, yaml_file_path):
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -834,16 +822,15 @@ def _process_existing_english_src(
         
         # 8. 提取结果统计
         extracted_result = {
-            "total_count": extracted_data["metadata"]["total_count"],
-            "success_count": extracted_data["metadata"]["success_count"],
-            "fail_count": extracted_data["metadata"]["fail_count"],
-            "fail_reasons": extracted_data["metadata"]["fail_reasons"],
+            "total_count": len(ast_mappings),
+            "success_count": len(yaml_mappings),
+            "fail_count": 0,
+            "fail_reasons": [],
         }
 
-        # 9. 将源文件夹移动到Complete目录
-        complete_path = os.path.join(base_path, "project", "Extract", "Complete")
-        from src.common.file_utils import move_to_complete
-        move_to_complete(extract_source, complete_path, "English", timestamp)
+
+        
+
         
         # 10. 更新报告
         report = generate_report(
@@ -919,20 +906,6 @@ def _process_no_english_src(
                 },
             )
         
-        # 3. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(english_file_path)
-        
-        # 4. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_english_file_path = os.path.join(base_path, "project", "Extract", "File_backup", "English")
-        rename_mod_folders(backup_english_file_path)
-        
-        # 5. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = os.path.join(base_path, "project", "Extract", "File_backup")
-        restore_backup(backup_path, os.path.join(base_path, "project", "Extract", "File"))
-        
         # 5. 查找JAR文件
         jar_files = []
         for root, dirs, files in os.walk(english_file_path):
@@ -951,7 +924,7 @@ def _process_no_english_src(
                 os.makedirs(jar_dir, exist_ok=True)
                 print(f"[DIR] 在 {os.path.basename(mod_dir)} 下创建jar文件夹: {jar_dir}")
                 # 调用JAR反编译函数
-                decompile_jar(jar_file, jar_dir)
+                decompile_single_jar(jar_file, jar_dir)
         
         # 7. 查找可用的提取源(src或jar文件夹)
         extract_source = None
@@ -1010,9 +983,10 @@ def _process_no_english_src(
             except Exception as e:
                 print(f"[WARN]  读取mod_info.json失败: {mod_info_path} - {e}")
         
-        # 9. 提取字符串
-        extracted_data = extract_strings(extraction_path, "English", base_path)
-        if not extracted_data or "metadata" not in extracted_data:
+        # 9. 提取字符串(使用Tree-sitter直接提取)
+        from src.common.tree_sitter_utils import extract_ast_mappings
+        ast_mappings = extract_ast_mappings(extraction_path)
+        if not ast_mappings:
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1026,9 +1000,15 @@ def _process_no_english_src(
                 },
             )
         
-        # 10. 保存提取的字符串
+        # 10. 生成初始YAML映射
+        from src.common.yaml_utils import generate_initial_yaml_mappings, save_yaml_mappings
+        yaml_mappings = generate_initial_yaml_mappings(ast_mappings, mark_unmapped=True)
+        
+        # 11. 保存提取的字符串
         strings_output_path = os.path.join(base_path, "project", "Extract", "Strings", "English")
-        if not save_extracted_strings(extracted_data, strings_output_path, "English", mod_folder_name=mod_folder_name, version=version, timestamp=timestamp):
+        os.makedirs(strings_output_path, exist_ok=True)
+        yaml_file_path = os.path.join(strings_output_path, f"{mod_folder_name}_{version}_English_mappings.yaml")
+        if not save_yaml_mappings(yaml_mappings, yaml_file_path):
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1042,18 +1022,17 @@ def _process_no_english_src(
                 },
             )
         
-        # 10. 提取结果统计
+        # 12. 提取结果统计
         extracted_result = {
-            "total_count": extracted_data["metadata"]["total_count"],
-            "success_count": extracted_data["metadata"]["success_count"],
-            "fail_count": extracted_data["metadata"]["fail_count"],
-            "fail_reasons": extracted_data["metadata"]["fail_reasons"],
+            "total_count": len(ast_mappings),
+            "success_count": len(yaml_mappings),
+            "fail_count": 0,
+            "fail_reasons": [],
         }
 
-        # 11. 将源文件夹移动到Complete目录
-        complete_path = os.path.join(base_path, "project", "Extract", "Complete")
-        from src.common.file_utils import move_to_complete
-        move_to_complete(extract_source, complete_path, "English", timestamp)
+
+        
+
         
         # 12. 更新报告
         decompile_info = None
@@ -1139,20 +1118,6 @@ def _process_existing_chinese_src(
                 },
             )
         
-        # 3. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(chinese_file_path)
-        
-        # 4. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_chinese_file_path = os.path.join(base_path, "project", "Extract", "File_backup", "Chinese")
-        rename_mod_folders(backup_chinese_file_path)
-        
-        # 5. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = os.path.join(base_path, "project", "Extract", "File_backup")
-        restore_backup(backup_path, os.path.join(base_path, "project", "Extract", "File"))
-        
         # 5. 查找src文件夹
         src_folders = find_src_folders(chinese_file_path)
         if not src_folders:
@@ -1207,9 +1172,10 @@ def _process_existing_chinese_src(
             except Exception as e:
                 print(f"[WARN]  读取mod_info.json失败: {mod_info_path} - {e}")
         
-        # 8. 提取字符串
-        extracted_data = extract_strings(target_src_folder, "Chinese", base_path)
-        if not extracted_data or "metadata" not in extracted_data:
+        # 8. 提取字符串(使用Tree-sitter直接提取)
+        from src.common.tree_sitter_utils import extract_ast_mappings
+        ast_mappings = extract_ast_mappings(target_src_folder)
+        if not ast_mappings:
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1223,9 +1189,15 @@ def _process_existing_chinese_src(
                 },
             )
         
-        # 9. 保存提取的字符串到规则文件
+        # 9. 生成初始YAML映射
+        from src.common.yaml_utils import generate_initial_yaml_mappings, save_yaml_mappings
+        yaml_mappings = generate_initial_yaml_mappings(ast_mappings, mark_unmapped=True)
+        
+        # 10. 保存提取的字符串到规则文件
         strings_output_path = os.path.join(base_path, "project", "Extract", "Strings", "Chinese")
-        if not save_extracted_strings(extracted_data, strings_output_path, "Chinese", mod_folder_name=mod_folder_name, version=version, timestamp=timestamp):
+        os.makedirs(strings_output_path, exist_ok=True)
+        yaml_file_path = os.path.join(strings_output_path, f"{mod_folder_name}_{version}_Chinese_mappings.yaml")
+        if not save_yaml_mappings(yaml_mappings, yaml_file_path):
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1239,18 +1211,17 @@ def _process_existing_chinese_src(
                 },
             )
         
-        # 9. 提取结果统计
+        # 11. 提取结果统计
         extracted_result = {
-            "total_count": extracted_data["metadata"]["total_count"],
-            "success_count": extracted_data["metadata"]["success_count"],
-            "fail_count": extracted_data["metadata"]["fail_count"],
-            "fail_reasons": extracted_data["metadata"]["fail_reasons"],
+            "total_count": len(ast_mappings),
+            "success_count": len(yaml_mappings),
+            "fail_count": 0,
+            "fail_reasons": [],
         }
 
-        # 10. 将源文件夹移动到Complete目录
-        complete_path = os.path.join(base_path, "project", "Extract", "Complete")
-        from src.common.file_utils import move_to_complete
-        move_to_complete(extract_source, complete_path, "Chinese", timestamp)
+
+        
+
         
         # 11. 更新报告
         report = generate_report(
@@ -1326,20 +1297,6 @@ def _process_no_chinese_src(
                 },
             )
         
-        # 3. 重命名模组文件夹
-        print("[NOTE] 开始重命名模组文件夹...")
-        rename_mod_folders(chinese_file_path)
-        
-        # 4. 重命名备份文件夹
-        print("[NOTE] 开始重命名备份文件夹...")
-        backup_chinese_file_path = os.path.join(base_path, "project", "Extract", "File_backup", "Chinese")
-        rename_mod_folders(backup_chinese_file_path)
-        
-        # 5. 恢复备份
-        print("[NOTE] 开始恢复备份...")
-        backup_path = os.path.join(base_path, "project", "Extract", "File_backup")
-        restore_backup(backup_path, os.path.join(base_path, "project", "Extract", "File"))
-        
         # 5. 查找JAR文件
         jar_files = []
         for root, dirs, files in os.walk(chinese_file_path):
@@ -1358,7 +1315,7 @@ def _process_no_chinese_src(
                 os.makedirs(jar_dir, exist_ok=True)
                 print(f"[DIR] 在 {os.path.basename(mod_dir)} 下创建jar文件夹: {jar_dir}")
                 # 调用JAR反编译函数
-                decompile_jar(jar_file, jar_dir)
+                decompile_single_jar(jar_file, jar_dir)
         
         # 7. 查找可用的提取源(src或jar文件夹)
         extract_source = None
@@ -1440,9 +1397,10 @@ def _process_no_chinese_src(
             except Exception as e:
                 print(f"[WARN]  读取mod_info.json失败: {mod_info_path} - {e}")
         
-        # 10. 提取字符串
-        extracted_data = extract_strings(extraction_path, "Chinese", base_path)
-        if not extracted_data or "metadata" not in extracted_data:
+        # 10. 提取字符串(使用Tree-sitter直接提取)
+        from src.common.tree_sitter_utils import extract_ast_mappings
+        ast_mappings = extract_ast_mappings(extraction_path)
+        if not ast_mappings:
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1456,9 +1414,15 @@ def _process_no_chinese_src(
                 },
             )
         
-        # 11. 保存提取的字符串
+        # 11. 生成初始YAML映射
+        from src.common.yaml_utils import generate_initial_yaml_mappings, save_yaml_mappings
+        yaml_mappings = generate_initial_yaml_mappings(ast_mappings, mark_unmapped=True)
+        
+        # 12. 保存提取的字符串
         strings_output_path = os.path.join(base_path, "project", "Extract", "Strings", "Chinese")
-        if not save_extracted_strings(extracted_data, strings_output_path, "Chinese", mod_folder_name=mod_folder_name, version=version, timestamp=timestamp):
+        os.makedirs(strings_output_path, exist_ok=True)
+        yaml_file_path = os.path.join(strings_output_path, f"{mod_folder_name}_{version}_Chinese_mappings.yaml")
+        if not save_yaml_mappings(yaml_mappings, yaml_file_path):
             return generate_report(
                 process_id=report["process_id"],
                 mode="Extract",
@@ -1472,18 +1436,17 @@ def _process_no_chinese_src(
                 },
             )
         
-        # 11. 提取结果统计
+        # 13. 提取结果统计
         extracted_result = {
-            "total_count": extracted_data["metadata"]["total_count"],
-            "success_count": extracted_data["metadata"]["success_count"],
-            "fail_count": extracted_data["metadata"]["fail_count"],
-            "fail_reasons": extracted_data["metadata"]["fail_reasons"],
+            "total_count": len(ast_mappings),
+            "success_count": len(yaml_mappings),
+            "fail_count": 0,
+            "fail_reasons": [],
         }
 
-        # 12. 将源文件夹移动到Complete目录
-        complete_path = os.path.join(base_path, "project", "Extract", "Complete")
-        from src.common.file_utils import move_to_complete
-        move_to_complete(extract_source, complete_path, "Chinese", timestamp)
+
+        
+
         
         # 13. 更新报告
         decompile_info = None

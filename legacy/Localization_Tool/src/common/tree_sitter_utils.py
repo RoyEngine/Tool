@@ -11,8 +11,17 @@ import sys
 from typing import List, Dict, Any, Optional
 
 # 添加虚拟环境的site-packages目录到Python搜索路径
-venv_site_packages = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.venv', 'Lib', 'site-packages')
+# 获取当前文件的绝对路径
+current_file_path = os.path.abspath(__file__)
+# 计算虚拟环境的site-packages目录路径
+# 路径结构：legacy/.venv/Lib/site-packages
+venv_site_packages = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file_path)))),
+    '.venv', 'Lib', 'site-packages'
+)
 sys.path.insert(0, venv_site_packages)
+print(f"[DEBUG] 添加虚拟环境site-packages目录到Python搜索路径: {venv_site_packages}")
+print(f"[DEBUG] 虚拟环境目录是否存在: {os.path.exists(venv_site_packages)}")
 
 # 动态导入tree_sitter，避免导入错误
 TREE_SITTER_AVAILABLE = False
@@ -69,8 +78,11 @@ def initialize_languages():
     """
     global JAVA_LANGUAGE, KOTLIN_LANGUAGE, _LANGUAGES_INITIALIZED
     
+    print("[DEBUG] 开始初始化Tree-sitter语言解析器...")
+    
     # 检查是否已经初始化过
     if _LANGUAGES_INITIALIZED:
+        print("[DEBUG] Tree-sitter语言解析器已经初始化过，跳过初始化")
         return
     
     if not TREE_SITTER_AVAILABLE:
@@ -81,66 +93,117 @@ def initialize_languages():
     # 初始化Java解析器
     JAVA_LANGUAGE = None
     try:
-        print("  尝试获取Java语言对象...")
+        print("[DEBUG]  开始初始化Java解析器...")
+        print("[DEBUG]  尝试获取Java语言对象...")
         java_lang = tree_sitter_java.language()
-        print(f"  语言对象类型: {type(java_lang)}")
+        print(f"[DEBUG]  语言对象: {java_lang}")
+        print(f"[DEBUG]  语言对象类型: {type(java_lang)}")
         
-        # 方法1: 尝试直接使用Language构造函数包装PyCapsule
+        # 方法1: 尝试直接使用Language构造函数包装PyCapsule (Tree-sitter 0.25.2+)
         try:
+            print("[DEBUG]  方法1: 尝试直接使用Language构造函数包装PyCapsule...")
             JAVA_LANGUAGE = Language(java_lang)
-            print("  成功转换为Language对象")
+            print("[DEBUG]  方法1成功: 成功转换为Language对象")
         except Exception as e1:
-            print(f"  方法1失败: {e1}")
+            print(f"[DEBUG]  方法1失败: {e1}")
+            print(f"[DEBUG]  异常类型: {type(e1).__name__}")
             
             # 方法2: 尝试查找Tree-sitter模块中的转换函数
             try:
+                print("[DEBUG]  方法2: 尝试查找Tree-sitter模块中的转换函数...")
                 has_convert = hasattr(tree_sitter, '_convert_capsule_to_language')
-                print(f"  有_convert_capsule_to_language函数: {has_convert}")
+                print(f"[DEBUG]  有_convert_capsule_to_language函数: {has_convert}")
                 
                 if has_convert:
+                    print("[DEBUG]  调用_convert_capsule_to_language函数...")
                     JAVA_LANGUAGE = tree_sitter._convert_capsule_to_language(java_lang)
-                    print("  成功使用转换函数")
+                    print("[DEBUG]  方法2成功: 成功使用转换函数")
                 else:
-                    # 方法3: 直接使用language对象，不转换
-                    print("  尝试直接使用language对象...")
+                    # 方法3: 直接使用language对象，不转换 (兼容旧版Tree-sitter)
+                    print("[DEBUG]  方法3: 尝试直接使用language对象...")
                     JAVA_LANGUAGE = java_lang
-                    print("  成功使用language对象")
+                    print("[DEBUG]  方法3成功: 直接使用language对象")
             except Exception as e2:
-                print(f"  方法2失败: {e2}")
+                print(f"[DEBUG]  方法2失败: {e2}")
+                print(f"[DEBUG]  异常类型: {type(e2).__name__}")
+                
+                # 方法4: 尝试使用tree_sitter.Language.from_capsule (如果可用)
+                try:
+                    print("[DEBUG]  方法4: 尝试使用tree_sitter.Language.from_capsule...")
+                    if hasattr(Language, 'from_capsule'):
+                        JAVA_LANGUAGE = Language.from_capsule(java_lang)
+                        print("[DEBUG]  方法4成功: 成功使用from_capsule方法")
+                    else:
+                        print("[DEBUG]  方法4失败: Language类没有from_capsule方法")
+                except Exception as e3:
+                    print(f"[DEBUG]  方法4失败: {e3}")
+                    print(f"[DEBUG]  异常类型: {type(e3).__name__}")
     except Exception as e:
-        print(f"Java解析器初始化失败: {e}")
+        print(f"[ERROR] Java解析器初始化失败: {e}")
+        print(f"[ERROR] 异常类型: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
     
     # 初始化Kotlin解析器
     KOTLIN_LANGUAGE = None
     try:
-        print("  尝试获取Kotlin语言对象...")
+        print("[DEBUG]  开始初始化Kotlin解析器...")
+        print("[DEBUG]  尝试获取Kotlin语言对象...")
         kotlin_lang = tree_sitter_kotlin.language()
-        print(f"  语言对象类型: {type(kotlin_lang)}")
+        print(f"[DEBUG]  语言对象: {kotlin_lang}")
+        print(f"[DEBUG]  语言对象类型: {type(kotlin_lang)}")
         
-        # 方法1: 尝试直接使用Language构造函数包装PyCapsule
+        # 方法1: 尝试直接使用Language构造函数包装PyCapsule (Tree-sitter 0.25.2+)
         try:
+            print("[DEBUG]  方法1: 尝试直接使用Language构造函数包装PyCapsule...")
             KOTLIN_LANGUAGE = Language(kotlin_lang)
-            print("  成功转换为Language对象")
+            print("[DEBUG]  方法1成功: 成功转换为Language对象")
         except Exception as e1:
-            print(f"  方法1失败: {e1}")
+            print(f"[DEBUG]  方法1失败: {e1}")
+            print(f"[DEBUG]  异常类型: {type(e1).__name__}")
             
             # 方法2: 尝试查找Tree-sitter模块中的转换函数
             try:
+                print("[DEBUG]  方法2: 尝试查找Tree-sitter模块中的转换函数...")
                 has_convert = hasattr(tree_sitter, '_convert_capsule_to_language')
-                print(f"  有_convert_capsule_to_language函数: {has_convert}")
+                print(f"[DEBUG]  有_convert_capsule_to_language函数: {has_convert}")
                 
                 if has_convert:
+                    print("[DEBUG]  调用_convert_capsule_to_language函数...")
                     KOTLIN_LANGUAGE = tree_sitter._convert_capsule_to_language(kotlin_lang)
-                    print("  成功使用转换函数")
+                    print("[DEBUG]  方法2成功: 成功使用转换函数")
                 else:
-                    # 方法3: 直接使用language对象，不转换
-                    print("  尝试直接使用language对象...")
+                    # 方法3: 直接使用language对象，不转换 (兼容旧版Tree-sitter)
+                    print("[DEBUG]  方法3: 尝试直接使用language对象...")
                     KOTLIN_LANGUAGE = kotlin_lang
-                    print("  成功使用language对象")
+                    print("[DEBUG]  方法3成功: 直接使用language对象")
             except Exception as e2:
-                print(f"  方法2失败: {e2}")
+                print(f"[DEBUG]  方法2失败: {e2}")
+                print(f"[DEBUG]  异常类型: {type(e2).__name__}")
+                
+                # 方法4: 尝试使用tree_sitter.Language.from_capsule (如果可用)
+                try:
+                    print("[DEBUG]  方法4: 尝试使用tree_sitter.Language.from_capsule...")
+                    if hasattr(Language, 'from_capsule'):
+                        KOTLIN_LANGUAGE = Language.from_capsule(kotlin_lang)
+                        print("[DEBUG]  方法4成功: 成功使用from_capsule方法")
+                    else:
+                        print("[DEBUG]  方法4失败: Language类没有from_capsule方法")
+                except Exception as e3:
+                    print(f"[DEBUG]  方法4失败: {e3}")
+                    print(f"[DEBUG]  异常类型: {type(e3).__name__}")
     except Exception as e:
-        print(f"Kotlin解析器初始化失败: {e}")
+        print(f"[ERROR] Kotlin解析器初始化失败: {e}")
+        print(f"[ERROR] 异常类型: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+    
+    # 打印初始化结果
+    print("[DEBUG]  初始化结果:")
+    print(f"[DEBUG]  Java语言对象: {JAVA_LANGUAGE}")
+    print(f"[DEBUG]  Java语言对象类型: {type(JAVA_LANGUAGE) if JAVA_LANGUAGE else 'None'}")
+    print(f"[DEBUG]  Kotlin语言对象: {KOTLIN_LANGUAGE}")
+    print(f"[DEBUG]  Kotlin语言对象类型: {type(KOTLIN_LANGUAGE) if KOTLIN_LANGUAGE else 'None'}")
     
     # 根据初始化结果输出信息
     if JAVA_LANGUAGE and KOTLIN_LANGUAGE:
@@ -155,6 +218,7 @@ def initialize_languages():
     
     # 设置初始化完成标志位
     _LANGUAGES_INITIALIZED = True
+    print("[DEBUG] Tree-sitter语言解析器初始化完成")
 
 
 class ASTNode:

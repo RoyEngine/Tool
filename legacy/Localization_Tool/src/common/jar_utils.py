@@ -10,6 +10,9 @@ import os
 import subprocess
 import tempfile
 import zipfile
+import requests
+import shutil
+import concurrent.futures
 from typing import List, Dict, Any, Optional
 
 
@@ -29,6 +32,22 @@ def is_jar_file(file_path: str) -> bool:
 tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tools")
 cfr_path = os.path.join(tools_dir, "cfr-0.152", "cfr-0.152.jar")
 procyon_path = os.path.join(tools_dir, "procyon-decompiler-0.6.0", "procyon-decompiler-0.6.0.jar")
+
+# 反编译工具下载配置
+decompiler_config = {
+    "cfr": {
+        "version": "0.152",
+        "url": "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar",
+        "dir": os.path.join(tools_dir, "cfr-0.152"),
+        "path": cfr_path
+    },
+    "procyon": {
+        "version": "0.6.0",
+        "url": "https://github.com/mstrobel/procyon/releases/download/v0.6.0/procyon-decompiler-0.6.0.jar",
+        "dir": os.path.join(tools_dir, "procyon-decompiler-0.6.0"),
+        "path": procyon_path
+    }
+}
 
 
 def check_java_environment() -> bool:
@@ -98,31 +117,115 @@ def check_jar_file_integrity(jar_path: str) -> bool:
         return False
 
 
-def check_decompiler_tools() -> bool:
+def download_decompiler(decompiler_name: str) -> bool:
     """
-    检查反编译工具是否可用
+    下载指定的反编译工具
+    
+    Args:
+        decompiler_name: 反编译工具名称(cfr或procyon)
+    
+    Returns:
+        bool: 下载是否成功
+    """
+    if decompiler_name not in decompiler_config:
+        print(f"[ERROR] 不支持的反编译工具: {decompiler_name}")
+        return False
+    
+    config = decompiler_config[decompiler_name]
+    url = config["url"]
+    target_dir = config["dir"]
+    target_path = config["path"]
+    
+    print(f"[INFO] 开始下载反编译工具: {decompiler_name} {config['version']}")
+    print(f"[INFO] 下载地址: {url}")
+    print(f"[INFO] 保存路径: {target_path}")
+    
+    try:
+        # 创建目标目录
+        os.makedirs(target_dir, exist_ok=True)
+        print(f"[DIR] 创建目录: {target_dir}")
+        
+        # 下载文件
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # 保存文件
+        with open(target_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        
+        print(f"[OK] 成功下载反编译工具: {decompiler_name}")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 下载反编译工具失败: {e}")
+        # 清理可能的部分下载文件
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        return False
+    except Exception as e:
+        print(f"[ERROR] 下载反编译工具时发生异常: {e}")
+        # 清理可能的部分下载文件
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        return False
+
+
+def check_decompiler_tools(download_missing: bool = True) -> bool:
+    """
+    检查反编译工具是否可用，可选自动下载缺失的工具
+    
+    Args:
+        download_missing: 是否自动下载缺失的工具
     
     Returns:
         bool: 反编译工具是否可用
     """
     # 检查tools目录是否存在
     if not os.path.exists(tools_dir):
-        print(f"[ERROR] tools目录不存在: {tools_dir}")
-        print("[NOTE] 请确保在项目根目录下创建tools目录，并放入反编译工具")
-        return False
+        print(f"[INFO] tools目录不存在，创建目录: {tools_dir}")
+        os.makedirs(tools_dir, exist_ok=True)
     
     # 检查至少有一个反编译工具可用
     cfr_available = os.path.exists(cfr_path)
     procyon_available = os.path.exists(procyon_path)
     
-    if not cfr_available and not procyon_available:
-        print("[ERROR] 没有可用的反编译工具")
-        print(f"[NOTE] 请确保以下至少一个文件存在:")
-        print(f"  - {cfr_path}")
-        print(f"  - {procyon_path}")
+    if cfr_available or procyon_available:
+        print(f"[OK] 找到可用的反编译工具")
+        if cfr_available:
+            print(f"  - CFR: {cfr_path}")
+        if procyon_available:
+            print(f"  - Procyon: {procyon_path}")
+        return True
+    
+    # 没有可用的反编译工具，尝试自动下载
+    if download_missing:
+        print("[INFO] 没有可用的反编译工具，尝试自动下载")
+        
+        # 尝试下载CFR
+        if download_decompiler("cfr"):
+            return True
+        
+        # CFR下载失败，尝试下载Procyon
+        if download_decompiler("procyon"):
+            return True
+        
+        # 两个工具都下载失败
+        print("[ERROR] 自动下载反编译工具失败")
+        print(f"[NOTE] 请手动下载以下至少一个文件:")
+        print(f"  - CFR: {decompiler_config['cfr']['url']}")
+        print(f"  - Procyon: {decompiler_config['procyon']['url']}")
+        print(f"[NOTE] 并将其放入对应目录:")
+        print(f"  - CFR: {cfr_path}")
+        print(f"  - Procyon: {procyon_path}")
         return False
     
-    return True
+    # 不自动下载，直接返回失败
+    print("[ERROR] 没有可用的反编译工具")
+    print(f"[NOTE] 请确保以下至少一个文件存在:")
+    print(f"  - {cfr_path}")
+    print(f"  - {procyon_path}")
+    return False
 
 
 def convert_unicode_escapes(file_path: str) -> bool:
@@ -211,9 +314,21 @@ def decompile_jar(jar_path: str, output_dir: str, decompiler: str = "cfr") -> bo
     if not check_java_environment():
         return False
     
-    # 2. 检查反编译工具
-    if not check_decompiler_tools():
+    # 2. 检查反编译工具，自动下载缺失的工具
+    if not check_decompiler_tools(download_missing=True):
         return False
+    
+    # 3. 检查指定的反编译工具是否可用
+    if decompiler == "cfr" and not os.path.exists(cfr_path):
+        print(f"[ERROR] CFR反编译工具不可用: {cfr_path}")
+        print(f"[INFO] 尝试自动下载CFR...")
+        if not download_decompiler("cfr"):
+            return False
+    elif decompiler == "procyon" and not os.path.exists(procyon_path):
+        print(f"[ERROR] Procyon反编译工具不可用: {procyon_path}")
+        print(f"[INFO] 尝试自动下载Procyon...")
+        if not download_decompiler("procyon"):
+            return False
     
     # 3. 检查JAR文件完整性
     if not check_jar_file_integrity(jar_path):
@@ -266,6 +381,15 @@ def _decompile_with_cfr(jar_path: str, output_dir: str) -> bool:
         print(f"[ERROR] CFR工具不存在: {cfr_path}")
         return False
     
+    # 验证JAR文件
+    if not os.path.exists(jar_path):
+        print(f"[ERROR] JAR文件不存在: {jar_path}")
+        return False
+    
+    if not os.path.isfile(jar_path):
+        print(f"[ERROR] {jar_path} 不是一个文件")
+        return False
+    
     # 构建简化的命令，只保留必要的参数
     cmd = [
         "java",
@@ -276,7 +400,7 @@ def _decompile_with_cfr(jar_path: str, output_dir: str) -> bool:
         output_dir
     ]
     
-    print(f"[NOTE] 开始使用CFR反编译JAR文件: {jar_path}")
+    print(f"[NOTE] 开始使用CFR反编译JAR文件: {os.path.basename(jar_path)}")
     print(f"[DIR] 输出目录: {output_dir}")
     print(f"[CMD] 执行命令: {' '.join(cmd)}")
     
@@ -287,27 +411,44 @@ def _decompile_with_cfr(jar_path: str, output_dir: str) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=os.path.dirname(jar_path)
+            cwd=os.path.dirname(jar_path),
+            timeout=300  # 设置5分钟超时
         )
         
         if result.returncode == 0:
-            print(f"OK 使用CFR反编译成功: {jar_path}")
+            print(f"OK 使用CFR反编译成功: {os.path.basename(jar_path)}")
             # 验证输出目录是否有内容
-            if os.listdir(output_dir):
-                return True
+            if os.path.exists(output_dir):
+                if os.listdir(output_dir):
+                    print(f"[INFO] 输出目录包含 {len(os.listdir(output_dir))} 个文件")
+                    return True
+                else:
+                    print(f"[WARNING] 反编译成功但输出目录为空: {output_dir}")
+                    return True
             else:
-                print(f"[WARNING] 反编译成功但输出目录为空: {output_dir}")
-                return True
+                print(f"[ERROR] 输出目录不存在: {output_dir}")
+                return False
         else:
-            print(f"[ERROR] 使用CFR反编译失败: {jar_path}")
+            print(f"[ERROR] 使用CFR反编译失败: {os.path.basename(jar_path)}")
             print(f"  退出码: {result.returncode}")
-            print(f"  标准输出: {result.stdout}")
-            print(f"  错误输出: {result.stderr}")
+            if result.stdout:
+                print(f"  标准输出: {result.stdout[:500]}{'...' if len(result.stdout) > 500 else ''}")
+            if result.stderr:
+                print(f"  错误输出: {result.stderr[:500]}{'...' if len(result.stderr) > 500 else ''}")
             return False
+    except subprocess.TimeoutExpired:
+        print(f"[ERROR] 使用CFR反编译超时: {os.path.basename(jar_path)}")
+        print(f"  超时时间: 5分钟")
+        return False
+    except FileNotFoundError:
+        print(f"[ERROR] 未找到Java可执行文件，请确保Java已安装并添加到环境变量")
+        return False
     except Exception as e:
-        print(f"[ERROR] 使用CFR反编译时发生异常: {jar_path}")
+        print(f"[ERROR] 使用CFR反编译时发生异常: {os.path.basename(jar_path)}")
         print(f"  异常类型: {type(e).__name__}")
         print(f"  异常信息: {str(e)}")
+        import traceback
+        print(f"  堆栈跟踪: {traceback.format_exc()[:1000]}{'...' if len(traceback.format_exc()) > 1000 else ''}")
         return False
 
 
@@ -327,6 +468,15 @@ def _decompile_with_procyon(jar_path: str, output_dir: str) -> bool:
         print(f"[ERROR] Procyon工具不存在: {procyon_path}")
         return False
     
+    # 验证JAR文件
+    if not os.path.exists(jar_path):
+        print(f"[ERROR] JAR文件不存在: {jar_path}")
+        return False
+    
+    if not os.path.isfile(jar_path):
+        print(f"[ERROR] {jar_path} 不是一个文件")
+        return False
+    
     # 构建命令
     cmd = [
         "java",
@@ -337,7 +487,7 @@ def _decompile_with_procyon(jar_path: str, output_dir: str) -> bool:
         jar_path
     ]
     
-    print(f"[NOTE] 开始使用Procyon反编译JAR文件: {jar_path}")
+    print(f"[NOTE] 开始使用Procyon反编译JAR文件: {os.path.basename(jar_path)}")
     print(f"[DIR] 输出目录: {output_dir}")
     print(f"[CMD] 执行命令: {' '.join(cmd)}")
     
@@ -348,27 +498,42 @@ def _decompile_with_procyon(jar_path: str, output_dir: str) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=os.path.dirname(jar_path)
+            cwd=os.path.dirname(jar_path),
+            timeout=300  # 设置5分钟超时
         )
         
         if result.returncode == 0:
-            print(f"OK 使用Procyon反编译成功: {jar_path}")
+            print(f"OK 使用Procyon反编译成功: {os.path.basename(jar_path)}")
             # 验证输出目录是否有内容
-            if os.listdir(output_dir):
-                return True
+            if os.path.exists(output_dir):
+                if os.listdir(output_dir):
+                    print(f"[INFO] 输出目录包含 {len(os.listdir(output_dir))} 个文件")
+                    return True
+                else:
+                    print(f"[WARNING] 反编译成功但输出目录为空: {output_dir}")
+                    return True
             else:
-                print(f"[WARNING] 反编译成功但输出目录为空: {output_dir}")
-                return True
+                print(f"[ERROR] 输出目录不存在: {output_dir}")
+                return False
         else:
-            print(f"[ERROR] 使用Procyon反编译失败: {jar_path}")
+            print(f"[ERROR] 使用Procyon反编译失败: {os.path.basename(jar_path)}")
             print(f"  退出码: {result.returncode}")
-            print(f"  标准输出: {result.stdout}")
-            print(f"  错误输出: {result.stderr}")
+            print(f"  标准输出: {result.stdout[:500]}{'...' if len(result.stdout) > 500 else ''}")
+            print(f"  错误输出: {result.stderr[:500]}{'...' if len(result.stderr) > 500 else ''}")
             return False
+    except subprocess.TimeoutExpired:
+        print(f"[ERROR] 使用Procyon反编译超时: {os.path.basename(jar_path)}")
+        print(f"  超时时间: 5分钟")
+        return False
+    except FileNotFoundError:
+        print(f"[ERROR] 未找到Java可执行文件，请确保Java已安装并添加到环境变量")
+        return False
     except Exception as e:
-        print(f"[ERROR] 使用Procyon反编译时发生异常: {jar_path}")
+        print(f"[ERROR] 使用Procyon反编译时发生异常: {os.path.basename(jar_path)}")
         print(f"  异常类型: {type(e).__name__}")
         print(f"  异常信息: {str(e)}")
+        import traceback
+        print(f"  堆栈跟踪: {traceback.format_exc()[:1000]}{'...' if len(traceback.format_exc()) > 1000 else ''}")
         return False
 
 
@@ -553,40 +718,98 @@ def find_jar_files(directory: str) -> List[str]:
     return jar_files
 
 
-def decompile_all_jars_in_dir(input_dir: str, output_dir: str, decompiler: str = "cfr") -> List[Dict[str, Any]]:
+def _decompile_jar_task(jar_file: str, output_dir: str, decompiler: str, jar_name: str) -> Dict[str, Any]:
     """
-    反编译目录中的所有JAR文件
+    单个JAR文件反编译任务，用于并行处理
+    
+    Args:
+        jar_file: JAR文件路径
+        output_dir: 输出目录
+        decompiler: 反编译工具
+        jar_name: JAR文件名
+    
+    Returns:
+        Dict[str, Any]: 反编译结果
+    """
+    # 构建输出目录
+    jar_output_dir = os.path.join(output_dir, jar_name)
+    
+    # 反编译JAR文件
+    success = decompile_jar(jar_file, jar_output_dir, decompiler)
+    
+    # 记录结果
+    return {
+        "jar_file": jar_file,
+        "output_dir": jar_output_dir,
+        "success": success,
+        "decompiler": decompiler
+    }
+
+
+def decompile_all_jars_in_dir(input_dir: str, output_dir: str, decompiler: str = "cfr", max_workers: int = None) -> List[Dict[str, Any]]:
+    """
+    反编译目录中的所有JAR文件，支持并行处理
     
     Args:
         input_dir: 输入目录
         output_dir: 输出目录
         decompiler: 反编译工具，可选值：cfr或procyon
+        max_workers: 最大工作线程数，默认为CPU核心数
     
     Returns:
         List[Dict[str, Any]]: 反编译结果列表
     """
-    results = []
-    
     # 查找所有JAR文件
     jar_files = find_jar_files(input_dir)
     
     print(f"[NOTE] 找到 {len(jar_files)} 个JAR文件")
     
-    for jar_file in jar_files:
-        # 构建输出目录
-        jar_name = os.path.basename(jar_file).replace(".jar", "")
-        jar_output_dir = os.path.join(output_dir, jar_name)
+    if not jar_files:
+        return []
+    
+    # 检查Java环境和反编译工具
+    if not check_java_environment():
+        return []
+    
+    if not check_decompiler_tools(download_missing=True):
+        return []
+    
+    # 确保输出目录存在
+    os.makedirs(output_dir, exist_ok=True)
+    
+    results = []
+    
+    # 使用并行处理反编译所有JAR文件
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交任务
+        future_to_jar = {
+            executor.submit(
+                _decompile_jar_task,
+                jar_file,
+                output_dir,
+                decompiler,
+                os.path.basename(jar_file).replace(".jar", "")
+            ): jar_file for jar_file in jar_files
+        }
         
-        # 反编译JAR文件
-        success = decompile_jar(jar_file, jar_output_dir, decompiler)
-        
-        # 记录结果
-        results.append({
-            "jar_file": jar_file,
-            "output_dir": jar_output_dir,
-            "success": success,
-            "decompiler": decompiler
-        })
+        # 处理结果
+        for future in concurrent.futures.as_completed(future_to_jar):
+            jar_file = future_to_jar[future]
+            try:
+                result = future.result()
+                results.append(result)
+                if result["success"]:
+                    print(f"OK 反编译成功: {os.path.basename(jar_file)}")
+                else:
+                    print(f"[ERROR] 反编译失败: {os.path.basename(jar_file)}")
+            except Exception as e:
+                print(f"[ERROR] 反编译 {os.path.basename(jar_file)} 时发生异常: {e}")
+                results.append({
+                    "jar_file": jar_file,
+                    "output_dir": os.path.join(output_dir, os.path.basename(jar_file).replace(".jar", "")),
+                    "success": False,
+                    "decompiler": decompiler
+                })
     
     return results
 
