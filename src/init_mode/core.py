@@ -52,6 +52,7 @@ REQUIRED_FOLDERS = [
     "output/Extend_zh2en",
     "rule/Chinese",
     "rule/English",
+    
 ]
 
 

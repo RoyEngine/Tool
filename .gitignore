@@ -3,6 +3,8 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
+.pytest_cache/
+.coverage
 
 # Virtual env / tooling
 .venv/
@@ -19,6 +21,7 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+logs/
 
 # Trae IDE 配置
 .trae/
@@ -29,7 +32,17 @@ out/
 reports/
 cache/
 tmp/
+temp_output/
 
-# Project-specific directories
-Localization_Tool/.pytest_cache/
-Localization_Tool/logs/
+# Project specific
+File/
+
+# Temporary files
+temp_*.yaml
+
+# Test directories
+test/
+htmlcov/
+
+# Tools directories
+tools/**/*.jar

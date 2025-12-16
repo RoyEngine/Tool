@@ -1,0 +1,4 @@
+warning: in the working copy of 'Localization_Tool/test/test_yaml_utils.py', LF will be replaced by CRLF the next time Git touches it
+.gitignore
+Localization_Tool/test/test_yaml_utils.py
+test_string_extract.py
