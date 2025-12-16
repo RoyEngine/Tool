@@ -372,7 +372,7 @@ def _extract_strings_from_single_file(file_path: str) -> List[Dict[str, Any]]:
     return extract_strings_from_ast(tree, file_path)
 
 
-def extract_ast_mappings(root_dir: str, use_parallel: bool = False, max_workers: int = None) -> Iterator[Dict[str, Any]]:
+def extract_ast_mappings(root_dir: str, use_parallel: bool = False, max_workers: int = None, use_cache: bool = True) -> Iterator[Dict[str, Any]]:
     """
     从指定根目录提取AST映射，使用生成器优化内存使用
     
@@ -380,32 +380,74 @@ def extract_ast_mappings(root_dir: str, use_parallel: bool = False, max_workers:
         root_dir: 根目录路径
         use_parallel: 是否使用并行处理
         max_workers: 最大工作线程数
+        use_cache: 是否使用缓存机制，支持增量更新
     
     Yields:
         Dict[str, Any]: AST映射
     """
     from .parallel_utils import get_all_source_files, ParallelProcessor
+    from .cache_utils import FileCacheManager
     
     # 获取所有需要处理的文件
     file_extensions = ['.java', '.kt', '.kts', '.py']
     all_files = get_all_source_files(root_dir, file_extensions)
     
-    if use_parallel and len(all_files) > 1:
+    # 需要处理的文件列表
+    files_to_process = all_files
+    
+    # 缓存管理器
+    cache_manager = None
+    
+    if use_cache:
+        # 初始化缓存管理器
+        cache_manager = FileCacheManager()
+        
+        # 获取已变更的文件
+        files_to_process = cache_manager.get_changed_files(all_files)
+        
+        if files_to_process:
+            print(f"[INFO] 检测到 {len(files_to_process)} 个文件已变更，开始处理")
+            print(f"[INFO] 跳过 {len(all_files) - len(files_to_process)} 个未变更文件")
+        else:
+            print(f"[INFO] 没有检测到已变更文件，跳过处理")
+            return
+    
+    if use_parallel and len(files_to_process) > 1:
         # 使用并行处理
         processor = ParallelProcessor(max_workers=max_workers, use_multiprocessing=False)
-        results = processor.process_files(all_files, _extract_strings_from_single_file)
+        results = processor.process_files(files_to_process, _extract_strings_from_single_file)
         
         # 输出并行处理结果
         print(f"[INFO] 并行处理完成: 成功 {len(results['success'])} 个文件, 失败 {len(results['failed'])} 个文件, 耗时 {results['time']:.2f} 秒")
         
-        # 逐个返回所有结果
+        # 逐个返回所有结果并更新缓存
         for result in results['success']:
+            file_path = result['file']
             yield from result['result']
+            
+            # 更新缓存
+            if use_cache and cache_manager:
+                cache_manager.update_file_cache(file_path, {
+                    'processed': True,
+                    'strings_extracted': len(result['result'])
+                })
     else:
         # 顺序处理
-        for file_path in all_files:
+        for file_path in files_to_process:
             strings = _extract_strings_from_single_file(file_path)
             yield from strings
+            
+            # 更新缓存
+            if use_cache and cache_manager:
+                cache_manager.update_file_cache(file_path, {
+                    'processed': True,
+                    'strings_extracted': len(strings)
+                })
+    
+    if use_cache and cache_manager:
+        # 输出缓存统计信息
+        stats = cache_manager.get_cache_statistics()
+        print(f"[INFO] 缓存统计: 总文件 {stats['total_files']}, 缓存大小 {stats['total_size_mb']:.2f} MB")
 
 
 import re

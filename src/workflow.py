@@ -15,7 +15,7 @@ from datetime import datetime
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.common.yaml_utils import (
+from common.yaml_utils import (
     load_yaml_mappings,
     generate_translation_rules,
     update_translation_rules,
@@ -24,8 +24,8 @@ from src.common.yaml_utils import (
     RuleConflictDetector
 )
 
-from src.common.tree_sitter_utils import extract_ast_mappings
-from src.common.file_utils import ensure_directory_exists
+from common.tree_sitter_utils import extract_ast_mappings
+from common.file_utils import ensure_directory_exists
 
 def parse_args():
     """
@@ -38,13 +38,13 @@ def parse_args():
 示例用法：
 
 # 生成翻译规则
-python main_workflow.py generate-rules --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --output-file rules.yaml
+python -m src.workflow generate-rules --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --output-file rules.yaml
 
 # 更新翻译规则
-python main_workflow.py update-rules --existing-rules old_rules.yaml --new-english new_en.yaml --new-chinese new_zh.yaml --output-file updated_rules.yaml
+python -m src.workflow update-rules --existing-rules old_rules.yaml --new-english new_en.yaml --new-chinese new_zh.yaml --output-file updated_rules.yaml
 
 # 运行完整工作流
-python main_workflow.py workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output
+python -m src.workflow workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output
         """
     )
     
@@ -160,6 +160,12 @@ python main_workflow.py workflow --english-file English_mappings.yaml --chinese-
         type=int,
         default=None,
         help="最大工作线程数"
+    )
+    parser_workflow.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help="禁用缓存机制，强制重新处理所有文件"
     )
     
     return parser.parse_args()
@@ -308,7 +314,7 @@ def run_complete_workflow(args):
         resolved_rules = detector.resolve_conflicts(rules, conflicts, "latest")
         
         # 保存解决后的规则
-        from src.common.yaml_utils import save_yaml_mappings
+        from common.yaml_utils import save_yaml_mappings
         save_yaml_mappings(resolved_rules, rules_file, version_control=True)
         print(f"[OK] 冲突已解决，规则已更新")
         
@@ -323,7 +329,7 @@ def run_complete_workflow(args):
     
     # 5. 提取AST映射（可选，用于后续分析）
     print("\n[STEP 4] 提取源代码AST映射")
-    ast_mappings = list(extract_ast_mappings(args.source_dir, use_parallel=args.parallel, max_workers=args.max_workers))
+    ast_mappings = list(extract_ast_mappings(args.source_dir, use_parallel=args.parallel, max_workers=args.max_workers, use_cache=not args.no_cache))
     print(f"[INFO] 从源代码提取到 {len(ast_mappings)} 个映射")
     
     # 6. 应用翻译到源代码（示例）

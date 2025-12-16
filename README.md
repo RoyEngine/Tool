@@ -33,6 +33,11 @@
 - 精确的字节级替换
 - 回写前自动备份
 
+### 6. 性能优化
+- **并行处理**：支持多线程并行文件处理，加速字符串提取和翻译回写
+- **缓存机制**：智能检测文件变更，只处理已变更文件，支持增量更新
+- **内存优化**：使用生成器替代列表，减少内存占用，支持处理大型项目
+
 ## 安装
 
 ### 环境要求
@@ -86,7 +91,17 @@ python main_workflow.py update-rules --existing-rules old_rules.yaml --new-engli
 ### 3. 运行完整工作流
 
 ```bash
+# 基本用法
 python main_workflow.py workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output
+
+# 启用并行处理（推荐用于大型项目）
+python main_workflow.py workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output --parallel
+
+# 启用并行处理并指定最大线程数
+python main_workflow.py workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output --parallel --max-workers 8
+
+# 禁用缓存机制，强制重新处理所有文件
+python main_workflow.py workflow --english-file English_mappings.yaml --chinese-file Chinese_mappings.yaml --source-dir ./src --output-dir ./output --no-cache
 ```
 
 ## 命令行接口
@@ -123,6 +138,9 @@ python main_workflow.py workflow --english-file English_mappings.yaml --chinese-
 - `--output-dir`: 输出目录路径（默认：./output）
 - `--mod-id`: 模组ID（可选）
 - `--existing-rules`: 现有规则文件路径（可选）
+- `--parallel`: 启用并行处理（默认：禁用）
+- `--max-workers`: 最大工作线程数（默认：CPU核心数）
+- `--no-cache`: 禁用缓存机制，强制重新处理所有文件（默认：启用缓存）
 
 ## Python API
 
