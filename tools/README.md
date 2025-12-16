@@ -4,9 +4,7 @@
 
 | 工具名称 | 版本 | 用途 | 详细说明 |
 |---------|------|------|----------|
-| **ast-grep** | - | AST搜索工具，用于代码分析和转换 | [查看详情](ast-grep/README.md) |
 | **cfr-0.152** | 0.152 | Java反编译工具，用于反编译JAR文件 | [查看详情](cfr-0.152/README.md) |
-| **jq** | - | JSON处理工具，用于格式化和处理JSON数据 | [查看详情](jq/README.md) |
 | **procyon-decompiler-0.6.0** | 0.6.0 | Java反编译工具，用于反编译JAR文件 | [查看详情](procyon-decompiler-0.6.0/README.md) |
 
 ## 工具分类
