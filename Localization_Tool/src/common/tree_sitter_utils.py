@@ -8,7 +8,7 @@ Tree-sitter AST解析和字符串提取工具
 
 import os
 import sys
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterator
 
 # 添加虚拟环境的site-packages目录到Python搜索路径
 # 获取当前文件的绝对路径
@@ -338,50 +338,74 @@ def get_parser(file_path: str) -> Optional[Parser]:
     return None
 
 
-def extract_ast_mappings(root_dir: str) -> List[Dict[str, Any]]:
+def _extract_strings_from_single_file(file_path: str) -> List[Dict[str, Any]]:
     """
-    从指定根目录提取AST映射
+    从单个文件中提取字符串
+    
+    Args:
+        file_path: 文件路径
+    
+    Returns:
+        List[Dict[str, Any]]: 提取的字符串列表
+    """
+    # 获取解析器
+    parser = get_parser(file_path)
+    if not parser:
+        return []
+    
+    # 读取文件内容
+    try:
+        with open(file_path, 'rb') as f:
+            code = f.read()
+    except Exception as e:
+        print(f"[WARN]  读取文件失败: {file_path} - {e}")
+        return []
+    
+    # 解析代码生成AST
+    try:
+        tree = parser.parse(code)
+    except Exception as e:
+        print(f"[WARN]  解析文件失败: {file_path} - {e}")
+        return []
+    
+    # 遍历AST，提取字符串节点
+    return extract_strings_from_ast(tree, file_path)
+
+
+def extract_ast_mappings(root_dir: str, use_parallel: bool = False, max_workers: int = None) -> Iterator[Dict[str, Any]]:
+    """
+    从指定根目录提取AST映射，使用生成器优化内存使用
     
     Args:
         root_dir: 根目录路径
+        use_parallel: 是否使用并行处理
+        max_workers: 最大工作线程数
     
-    Returns:
-        List[Dict[str, Any]]: AST映射列表
+    Yields:
+        Dict[str, Any]: AST映射
     """
-    mappings = []
+    from .parallel_utils import get_all_source_files, ParallelProcessor
     
-    # 遍历根目录下的所有文件
-    for root, _, files in os.walk(root_dir):
-        for file in files:
-            # 支持Java、Kotlin和Python文件
-            if file.endswith(('.java', '.kt', '.kts', '.py')):
-                file_path = os.path.join(root, file)
-                
-                # 获取解析器
-                parser = get_parser(file_path)
-                if not parser:
-                    continue
-                
-                # 读取文件内容
-                try:
-                    with open(file_path, 'rb') as f:
-                        code = f.read()
-                except Exception as e:
-                    print(f"[WARN]  读取文件失败: {file_path} - {e}")
-                    continue
-                
-                # 解析代码生成AST
-                try:
-                    tree = parser.parse(code)
-                except Exception as e:
-                    print(f"[WARN]  解析文件失败: {file_path} - {e}")
-                    continue
-                
-                # 遍历AST，提取字符串节点
-                strings = extract_strings_from_ast(tree, file_path)
-                mappings.extend(strings)
+    # 获取所有需要处理的文件
+    file_extensions = ['.java', '.kt', '.kts', '.py']
+    all_files = get_all_source_files(root_dir, file_extensions)
     
-    return mappings
+    if use_parallel and len(all_files) > 1:
+        # 使用并行处理
+        processor = ParallelProcessor(max_workers=max_workers, use_multiprocessing=False)
+        results = processor.process_files(all_files, _extract_strings_from_single_file)
+        
+        # 输出并行处理结果
+        print(f"[INFO] 并行处理完成: 成功 {len(results['success'])} 个文件, 失败 {len(results['failed'])} 个文件, 耗时 {results['time']:.2f} 秒")
+        
+        # 逐个返回所有结果
+        for result in results['success']:
+            yield from result['result']
+    else:
+        # 顺序处理
+        for file_path in all_files:
+            strings = _extract_strings_from_single_file(file_path)
+            yield from strings
 
 
 import re

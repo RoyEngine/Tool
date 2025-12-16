@@ -158,7 +158,7 @@ class SuggestionGenerator:
             Dict[str, List[Dict[str, Any]]]: 建议字典，键为字符串ID，值为建议列表
         """
         # 从目录提取字符串
-        ast_mappings = extract_ast_mappings(root_dir)
+        ast_mappings = list(extract_ast_mappings(root_dir))
         
         # 生成初始YAML映射
         yaml_mappings = generate_initial_yaml_mappings(ast_mappings)

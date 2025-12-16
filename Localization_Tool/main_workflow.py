@@ -149,6 +149,18 @@ python main_workflow.py workflow --english-file English_mappings.yaml --chinese-
         default="",
         help="现有规则文件路径（可选）"
     )
+    parser_workflow.add_argument(
+        "--parallel",
+        action="store_true",
+        default=False,
+        help="启用并行处理"
+    )
+    parser_workflow.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="最大工作线程数"
+    )
     
     return parser.parse_args()
 
@@ -311,7 +323,7 @@ def run_complete_workflow(args):
     
     # 5. 提取AST映射（可选，用于后续分析）
     print("\n[STEP 4] 提取源代码AST映射")
-    ast_mappings = extract_ast_mappings(args.source_dir)
+    ast_mappings = list(extract_ast_mappings(args.source_dir, use_parallel=args.parallel, max_workers=args.max_workers))
     print(f"[INFO] 从源代码提取到 {len(ast_mappings)} 个映射")
     
     # 6. 应用翻译到源代码（示例）

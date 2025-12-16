@@ -1190,7 +1190,7 @@ def create_yaml_mapping_from_directory(root_dir: str, output_file: str) -> bool:
         bool: 是否创建成功
     """
     # 提取AST映射
-    ast_mappings = extract_ast_mappings(root_dir)
+    ast_mappings = list(extract_ast_mappings(root_dir))
     
     if not ast_mappings:
         print(f"[WARN]  未从目录 {root_dir} 提取到任何字符串")

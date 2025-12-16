@@ -68,7 +68,7 @@ def command_extract(args: argparse.Namespace) -> int:
     if args.source_dir:
         print(f"[INFO] 从源目录提取规则: {args.source_dir}")
         # 提取AST映射
-        ast_mappings = extract_ast_mappings(args.source_dir)
+        ast_mappings = list(extract_ast_mappings(args.source_dir))
         
         if not ast_mappings:
             print(f"[WARN]  未从源目录 {args.source_dir} 提取到任何字符串")

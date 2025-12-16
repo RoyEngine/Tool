@@ -19,6 +19,7 @@ from src.common.yaml_utils import (
     generate_translation_rules,
     update_translation_rules,
     generate_translation_report,
+    apply_yaml_mapping,
     RuleConflictDetector
 )
 
@@ -274,6 +275,43 @@ class TestYAMLUtils(unittest.TestCase):
         # 验证生成的规则数量应该是2条（取较小的数量）
         rules = load_yaml_mappings(output_file)
         self.assertEqual(len(rules), 2)
+    
+    def test_apply_yaml_mapping(self):
+        """测试应用YAML映射到源代码文件"""
+        # 创建测试Java文件
+        test_file = os.path.join(self.temp_dir, "TestFile.java")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("""
+public class TestFile {
+    public void main() {
+        System.out.println("Start Game");
+        System.out.println("Exit Game");
+    }
+}
+            """)
+        
+        # 创建测试规则
+        test_rules = [
+            {
+                "original": "Start Game",
+                "translated": "开始游戏",
+                "status": "translated"
+            },
+            {
+                "original": "Exit Game",
+                "translated": "退出游戏",
+                "status": "translated"
+            }
+        ]
+        
+        # 应用映射
+        translated_content = apply_yaml_mapping(test_file, test_rules)
+        
+        # 验证翻译结果
+        self.assertIn("开始游戏", translated_content)
+        self.assertIn("退出游戏", translated_content)
+        self.assertNotIn("Start Game", translated_content)
+        self.assertNotIn("Exit Game", translated_content)
 
 if __name__ == "__main__":
     unittest.main()

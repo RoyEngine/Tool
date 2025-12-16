@@ -8,8 +8,8 @@ Tree-sitter 初始化测试脚本
 import os
 import sys
 
-# 直接将 Localization_Tool/src 目录添加到 Python 搜索路径
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "Localization_Tool", "src"))
+# 直接将 src 目录添加到 Python 搜索路径
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 # 直接导入 tree_sitter_utils 模块
 from common.tree_sitter_utils import (

@@ -163,7 +163,7 @@ def _extract_strings_from_source(source_path: str, language: str, base_path: str
     
     # 提取AST映射
     from src.common.tree_sitter_utils import extract_ast_mappings
-    ast_mappings = extract_ast_mappings(source_path)
+    ast_mappings = list(extract_ast_mappings(source_path))
     
     if not ast_mappings:
         return {
